@@ -1,0 +1,16 @@
+{
+  "name": "sng-whatsapp",
+  "version": "1.0.0",
+  "description": "Inicializador do frontend e backend do SNG Chat",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "start.js",
+  "scripts": {
+    "start": "node start.js",
+    "dev": "node start.js",
+    "build": "npm --prefix frontend run build",
+    "start:backend": "npm --prefix backend start",
+    "start:frontend": "npm --prefix frontend run dev"
+  }
+}

@@ -1,0 +1,826 @@
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const fs = require('fs/promises');
+const path = require('path');
+const { randomUUID } = require('crypto');
+const qrcodeTerminal = require('qrcode-terminal');
+const config = require('../config/whatsapp');
+const { addToQueue } = require('./queueService');
+
+const Ticket = require('../models/Ticket');
+const Message = require('../models/Message');
+const Agent = require('../models/Agent');
+
+let client = null;
+let ioInstance = null;
+let isClientReady = false;
+let currentQrCode = null;
+const recentMessages = new Map();
+const pendingMessageAcks = new Map();
+const mediaDirectory = path.join(__dirname, '..', '..', '..', 'storage', 'media');
+const pendingOutgoingMedia = [];
+
+function getMediaExtension(media) {
+    const originalExtension = path.extname(media.filename || '').replace(/[^.a-zA-Z0-9]/g, '');
+    if (originalExtension) return originalExtension.toLowerCase();
+
+    const extensions = {
+        'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif',
+        'video/mp4': '.mp4', 'audio/ogg': '.ogg', 'audio/mpeg': '.mp3', 'application/pdf': '.pdf'
+    };
+    return extensions[media.mimetype] || '';
+}
+
+async function persistMedia(media) {
+    if (!media?.data) return null;
+
+    await fs.mkdir(mediaDirectory, { recursive: true });
+    const storedName = `${randomUUID()}${getMediaExtension(media)}`;
+    await fs.writeFile(path.join(mediaDirectory, storedName), Buffer.from(media.data, 'base64'));
+
+    return {
+        hasMedia: true,
+        mediaPath: storedName,
+        mediaMimeType: media.mimetype || 'application/octet-stream',
+        mediaFileName: media.filename || storedName
+    };
+}
+
+async function takePendingOutgoingMedia(targetChatId) {
+    const now = Date.now();
+    let index = pendingOutgoingMedia.findIndex(item => item.targetJid === targetChatId);
+
+    if (index < 0) {
+        index = pendingOutgoingMedia.findIndex(item => now - item.createdAt < 60000);
+    }
+    if (index < 0) return null;
+
+    const [pending] = pendingOutgoingMedia.splice(index, 1);
+    return persistMedia(pending.media);
+}
+
+async function downloadMessageMediaFallback(msg) {
+    const raw = msg._data || {};
+    const messageId = getWhatsAppMessageId(msg);
+    const mediaData = {
+        directPath: raw.directPath,
+        encFilehash: raw.encFilehash,
+        filehash: raw.filehash,
+        mediaKey: raw.mediaKey || msg.mediaKey,
+        mediaKeyTimestamp: raw.mediaKeyTimestamp,
+        type: raw.type || msg.type,
+        mimetype: raw.mimetype,
+        filename: raw.filename,
+        size: raw.size
+    };
+
+    return client.pupPage.evaluate(async ({ id, fallbackMedia }) => {
+        let model = null;
+        try {
+            model = window.require('WAWebCollections').Msg.get(id);
+        } catch (err) {}
+
+        if (!model) {
+            try {
+                model = (
+                    await window.require('WAWebCollections').Msg.getMessagesById([id])
+                )?.messages?.[0];
+            } catch (err) {}
+        }
+
+        if (model?.mediaData?.mediaStage !== 'RESOLVED') {
+            try {
+                await model.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1 });
+            } catch (err) {}
+        }
+
+        const source = model || fallbackMedia;
+        if (!source?.directPath || !source?.mediaKey) return null;
+
+        const mockQpl = {
+            addAnnotations() { return this; },
+            addPoint() { return this; }
+        };
+        const decryptedMedia = await window
+            .require('WAWebDownloadManager')
+            .downloadManager.downloadAndMaybeDecrypt({
+                directPath: source.directPath,
+                encFilehash: source.encFilehash,
+                filehash: source.filehash,
+                mediaKey: source.mediaKey,
+                mediaKeyTimestamp: source.mediaKeyTimestamp,
+                type: source.type,
+                signal: new AbortController().signal,
+                downloadQpl: mockQpl
+            });
+
+        return {
+            data: await window.WWebJS.arrayBufferToBase64Async(decryptedMedia),
+            mimetype: source.mimetype || fallbackMedia.mimetype,
+            filename: source.filename || fallbackMedia.filename,
+            filesize: source.size || fallbackMedia.size
+        };
+    }, { id: messageId, fallbackMedia: mediaData });
+}
+
+async function saveMessageMedia(msg) {
+    if (!msg.hasMedia) return null;
+
+    try {
+        if (msg.id && !msg.id._serialized) {
+            msg.id._serialized = getWhatsAppMessageId(msg);
+        }
+
+        const media = await Promise.race([
+            (async () => {
+                try {
+                    const standardMedia = await msg.downloadMedia();
+                    if (standardMedia?.data) return standardMedia;
+                } catch (err) {}
+
+                return downloadMessageMediaFallback(msg);
+            })(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout ao baixar midia')), 30000))
+        ]);
+        if (!media?.data) return null;
+
+        return persistMedia(media);
+    } catch (err) {
+        console.error(`[MIDIA] Nao foi possivel baixar a mensagem: ${err.message || err}`);
+        return null;
+    }
+}
+
+function getWhatsAppMessageId(msg) {
+    const id = msg?.id;
+    if (!id) return '';
+
+    if (id._serialized) return id._serialized;
+    if (id.$1) return id.$1;
+
+    const messageId = id.id || '';
+    const remote = id.remote || msg.to || msg.from || '';
+    return messageId && remote ? `${id.fromMe ? 'true' : 'false'}_${remote}_${messageId}` : messageId;
+}
+
+function mergeMessageAck(previousAck, nextAck) {
+    if (nextAck === -1) return -1;
+    if (previousAck === -1) return nextAck;
+    return Math.max(previousAck ?? 0, nextAck ?? 0);
+}
+
+async function getProfilePicUrl(contactId) {
+    if (!client || !contactId) return '';
+
+    try {
+        const profilePic = await client.pupPage.evaluate(async (id) => {
+            try {
+                const wid = window.require('WAWebWidFactory').createWid(id);
+                const result = await window
+                    .require('WAWebFindChatAction')
+                    .findOrCreateLatestChat(wid);
+                const chat = result?.chat || result;
+
+                if (!chat) return undefined;
+
+                return await window
+                    .require('WAWebContactProfilePicThumbBridge')
+                    .requestProfilePicFromServer(chat);
+            } catch (err) {
+                if (err?.name === 'ServerStatusCodeError') return undefined;
+                throw err;
+            }
+        }, contactId);
+
+        return profilePic?.eurl || '';
+    } catch (err) {
+        console.warn(`[FOTO] Foto indisponivel para ${contactId}: ${err.message || err}`);
+        return '';
+    }
+}
+
+async function downloadProfilePicture(url) {
+    if (!url) return null;
+
+    try {
+        const response = await fetch(url);
+        if (!response.ok) return null;
+
+        return {
+            buffer: Buffer.from(await response.arrayBuffer()),
+            contentType: response.headers.get('content-type') || 'image/jpeg'
+        };
+    } catch (err) {
+        return null;
+    }
+}
+
+async function getProfilePicture(identifier, isGroup = false, cachedUrl = '') {
+    if (!isClientReady || !client) return null;
+
+    const cachedPicture = await downloadProfilePicture(cachedUrl);
+    if (cachedPicture) return cachedPicture;
+
+    const contactId = isGroup
+        ? identifier
+        : identifier?.includes('@')
+            ? identifier
+            : `${identifier.replace(/\D/g, '')}@c.us`;
+    const url = await getProfilePicUrl(contactId);
+
+    return downloadProfilePicture(url);
+}
+
+function getChatDisplayName(chat, fallback = '') {
+    return chat?.name
+        || chat?.formattedTitle
+        || chat?.groupMetadata?.subject
+        || fallback;
+}
+
+async function getChatMetadata(chatId) {
+    if (!isClientReady || !client || !chatId) return null;
+
+    try {
+        const internalChat = await client.pupPage.evaluate(async (id) => {
+            try {
+                const wid = window.require('WAWebWidFactory').createWid(id);
+
+                if (id.includes('@g.us')) {
+                    try {
+                        await window
+                            .require('WAWebGroupQueryJob')
+                            .queryAndUpdateGroupMetadataById({ id });
+                    } catch (err) {}
+                }
+
+                let chat = window.require('WAWebCollections').Chat.get(wid);
+                if (!chat) {
+                    const result = await window
+                        .require('WAWebFindChatAction')
+                        .findOrCreateLatestChat(wid);
+                    chat = result?.chat || result;
+                }
+
+                if (!chat) return null;
+
+                return {
+                    id: chat.id?._serialized || chat.id?.$1 || id,
+                    name: chat.formattedTitle || chat.name || chat.groupMetadata?.subject || '',
+                    isGroup: Boolean(chat.isGroup || id.includes('@g.us'))
+                };
+            } catch (err) {
+                return null;
+            }
+        }, chatId);
+
+        let chat = null;
+        if (!internalChat?.name) {
+            try {
+                chat = await client.getChatById(chatId);
+            } catch (err) {}
+        }
+
+        if (!internalChat && !chat) return null;
+
+        return {
+            id: internalChat?.id || chat?.id?._serialized || chatId,
+            name: internalChat?.name || getChatDisplayName(chat),
+            isGroup: Boolean(internalChat?.isGroup || chat?.isGroup || chatId.includes('@g.us')),
+            profilePicUrl: await getProfilePicUrl(internalChat?.id || chat?.id?._serialized || chatId)
+        };
+    } catch (err) {
+        console.warn(`[CHAT] Nao foi possivel carregar os metadados de ${chatId}: ${err.message || err}`);
+        return null;
+    }
+}
+
+function initWhatsApp(io) {
+    ioInstance = io;
+
+    client = new Client({
+        authStrategy: new LocalAuth({ dataPath: config.authPath }),
+        webVersionCache: {
+            type: 'remote',
+            remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version-check/main/html/2.3000.1018939023-alpha.html',
+        },
+        puppeteer: {
+            ...config.puppeteer,
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--disable-gpu'
+            ],
+            timeout: 120000 
+        }
+    });
+
+    client.on('qr', (qr) => {
+        isClientReady = false;
+        currentQrCode = qr;
+        qrcodeTerminal.generate(qr, { small: true });
+        console.log('📌 QR Code gerado!');
+        if (ioInstance) ioInstance.emit('qr_code', { qr });
+    });
+
+    console.log('⏳ Iniciando navegador e carregando o WhatsApp Web...');
+
+    client.on('loading_screen', (percent, message) => {
+        console.log(`⏳ Carregando: ${percent}% - ${message}`);
+    });
+
+    client.on('authenticated', () => {
+        console.log('🔑 Autenticado com sucesso no WhatsApp Web!');
+    });
+
+    client.on('ready', () => {
+        isClientReady = true;
+        currentQrCode = null;
+        console.log('🚀 Cliente WhatsApp Pronto para Uso!');
+    });
+
+    client.on('auth_failure', (msg) => {
+        console.error('❌ Falha na autenticação:', msg);
+        isClientReady = false;
+    });
+
+    client.on('message', async (msg) => {
+        if (msg.isStatus || msg.from === 'status@broadcast' || msg.to === 'status@broadcast') return;
+
+        try {
+            let senderName = '';
+            let identifier = '';
+            let profilePicUrl = '';
+            let whatsappId = msg.from;
+            let isGroupChat = msg.from.includes('@g.us');
+
+            if (isGroupChat) {
+                identifier = msg.from;
+                try {
+                    const chat = await msg.getChat();
+                    senderName = getChatDisplayName(chat, 'Grupo sem nome');
+                    try {
+                        profilePicUrl = await getProfilePicUrl(chat.id._serialized);
+                    } catch (err) {}
+                } catch (e) {
+                    senderName = 'Grupo';
+                }
+            } else {
+                let cleanPhone = '';
+                try {
+                    const contact = await msg.getContact();
+                    whatsappId = contact.id?._serialized || msg.from;
+                    
+                    let timerFoto;
+
+                try {
+                    console.log('[FOTO] Iniciando consulta');
+
+                    const resultado = await Promise.race([
+                        getProfilePicUrl(contact.id._serialized),
+
+                        new Promise((_, reject) => {
+                            timerFoto = setTimeout(() => {
+                                reject(new Error('Consulta não respondeu em 10 segundos'));
+                            }, 10000);
+                        })
+                    ]);
+
+                    console.log('[FOTO] Consulta concluída:', resultado);
+
+                    profilePicUrl = resultado || '';
+                } catch (erro) {
+                    console.error('[FOTO] ERRO:', erro.stack || erro);
+                } finally {
+                    clearTimeout(timerFoto);
+                }
+
+                    if (contact.id && contact.id.user && !contact.id.user.includes('@')) {
+                        cleanPhone = contact.id.user;
+                    } else if (contact.number) {
+                        cleanPhone = contact.number.replace(/\D/g, '');
+                    }
+
+                    if ((!cleanPhone || cleanPhone.length < 8) && contact.id && contact.id._serialized) {
+                        const serialized = contact.id._serialized;
+                        if (!serialized.includes('@lid')) {
+                            cleanPhone = serialized.replace(/\D/g, '');
+                        }
+                    }
+
+                    if (!cleanPhone || cleanPhone.length < 8) {
+                        const chat = await msg.getChat();
+                        if (chat && chat.id && chat.id.user && !chat.id.user.includes('@')) {
+                            cleanPhone = chat.id.user;
+                        } else {
+                            cleanPhone = msg.from.replace(/\D/g, '');
+                        }
+                    }
+
+                    senderName = contact.name || contact.verifiedName || contact.pushname || '';
+                } catch (e) {
+                    cleanPhone = msg.from.replace(/\D/g, '');
+                }
+                identifier = cleanPhone.replace(/\D/g, '');
+            }
+
+            if (!profilePicUrl) {
+                try {
+                    const chat = await msg.getChat();
+                    if (chat) {
+                        profilePicUrl = await getProfilePicUrl(chat.id._serialized);
+                    }
+                } catch (err) {}
+            }
+
+            const bodyContent = msg.body || (msg.hasMedia ? '[Mídia/Arquivo]' : '');
+            const mediaInfo = await saveMessageMedia(msg);
+
+            let ticket = await Ticket.findOne({ phoneNumber: identifier });
+            if (!ticket) {
+                ticket = await Ticket.create({
+                    phoneNumber: identifier,
+                    whatsappId,
+                    contactName: senderName,
+                    profilePicUrl: profilePicUrl || '',
+                    isGroup: isGroupChat,
+                    status: 'pending',
+                    lastMessage: bodyContent
+                });
+            } else {
+                ticket.lastMessage = bodyContent;
+                ticket.whatsappId = whatsappId || ticket.whatsappId;
+                if (senderName) ticket.contactName = senderName;
+                if (profilePicUrl) ticket.profilePicUrl = profilePicUrl;
+                if (ticket.status === 'closed') ticket.status = 'pending';
+                ticket.updatedAt = Date.now();
+                await ticket.save();
+            }
+
+            const savedDbMessage = await Message.create({
+                ticketId: ticket._id,
+                phoneNumber: identifier,
+                sender: 'client',
+                body: bodyContent,
+                ...(mediaInfo || {})
+            });
+
+            const msgData = {
+                id: savedDbMessage._id.toString(),
+                ticketId: ticket._id.toString(),
+                from: msg.from,
+                senderName: senderName || identifier,
+                phoneNumber: identifier,
+                profilePicUrl: profilePicUrl || '',
+                body: bodyContent,
+                hasMedia: Boolean(mediaInfo),
+                mediaUrl: mediaInfo ? `/api/messages/${savedDbMessage._id}/media` : null,
+                mediaMimeType: mediaInfo?.mediaMimeType || '',
+                mediaFileName: mediaInfo?.mediaFileName || '',
+                timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+                fromMe: false
+            };
+
+            recentMessages.set(msg.from, msg);
+            setTimeout(() => recentMessages.delete(msg.from), 10 * 60 * 1000);
+
+            if (ioInstance) {
+                ioInstance.emit('new_message', {
+                    ticket,
+                    message: msgData
+                });
+            }
+        } catch (err) {
+            console.error('Erro no processamento da mensagem recebida:', err.message);
+        }
+    });
+
+    client.on('message_create', async (msg) => {
+        if (!msg.fromMe || msg.from === 'status@broadcast') return;
+
+        try {
+            const targetChatId = msg.to || msg.id.remote;
+            const whatsappId = targetChatId;
+            const isGroupChat = targetChatId.includes('@g.us');
+            
+            let identifier = '';
+            let chatName = '';
+            let profilePicUrl = '';
+
+            if (isGroupChat) {
+                identifier = targetChatId;
+                try {
+                    const chat = await client.getChatById(targetChatId);
+                    chatName = getChatDisplayName(chat, 'Grupo sem nome');
+                    profilePicUrl = await getProfilePicUrl(chat.id._serialized);
+                } catch (e) {
+                    chatName = 'Grupo';
+                }
+            } else {
+                let cleanId = targetChatId;
+                try {
+                    const contact = await client.getContactById(targetChatId);
+                    if (contact) {
+                        try {
+                            profilePicUrl = await getProfilePicUrl(contact.id._serialized);
+                        } catch (err) {}
+
+                        if (contact.id && contact.id.user && !contact.id.user.includes('@')) {
+                            identifier = contact.id.user;
+                        } else if (contact.number) {
+                            identifier = contact.number.replace(/\D/g, '');
+                        }
+
+                        chatName = contact.name || contact.verifiedName || contact.pushname || '';
+                    }
+                } catch (e) {}
+
+                if (!identifier || identifier.length < 8) {
+                    identifier = cleanId.replace(/\D/g, '');
+                }
+
+                if (!chatName) {
+                    chatName = identifier;
+                }
+            }
+
+            if (!profilePicUrl) {
+                try {
+                    const chat = await client.getChatById(targetChatId);
+                    if (chat) {
+                        profilePicUrl = await getProfilePicUrl(chat.id._serialized);
+                    }
+                } catch (err) {}
+            }
+
+            if (!identifier) return;
+
+            const bodyContent = msg.body || (msg.hasMedia ? '[Mídia/Arquivo]' : '');
+            const mediaInfo = await takePendingOutgoingMedia(targetChatId) || await saveMessageMedia(msg);
+
+            let ticket = await Ticket.findOne({ phoneNumber: identifier });
+            if (!ticket) {
+                ticket = await Ticket.create({
+                    phoneNumber: identifier,
+                    whatsappId,
+                    contactName: chatName,
+                    profilePicUrl: profilePicUrl || '',
+                    isGroup: isGroupChat,
+                    status: 'open',
+                    lastMessage: bodyContent
+                });
+            } else {
+                ticket.lastMessage = bodyContent;
+                ticket.whatsappId = whatsappId || ticket.whatsappId;
+                if (chatName && chatName !== identifier) {
+                    ticket.contactName = chatName;
+                }
+                if (profilePicUrl) {
+                    ticket.profilePicUrl = profilePicUrl;
+                }
+                ticket.updatedAt = Date.now();
+                await ticket.save();
+            }
+
+            // Evita criar duplicado exato no DB caso a mensagem já venha de message_create idêntica recente
+            const existingMessage = await Message.findOne({
+                ticketId: ticket._id,
+                body: bodyContent,
+                sender: 'agent',
+                createdAt: { $gte: new Date(Date.now() - 5000) }
+            });
+
+            let savedDbMessage = existingMessage;
+            const whatsappMessageId = getWhatsAppMessageId(msg);
+            const pendingAck = pendingMessageAcks.get(whatsappMessageId);
+            const currentAck = Number.isInteger(pendingAck)
+                ? pendingAck
+                : (Number.isInteger(msg.ack) ? msg.ack : 0);
+
+            if (!savedDbMessage) {
+                savedDbMessage = await Message.create({
+                    ticketId: ticket._id,
+                    phoneNumber: identifier,
+                    whatsappMessageId,
+                    sender: 'agent',
+                    body: bodyContent,
+                    ack: currentAck,
+                    ...(mediaInfo || {})
+                });
+            } else {
+                savedDbMessage.whatsappMessageId = whatsappMessageId || savedDbMessage.whatsappMessageId;
+                savedDbMessage.ack = mergeMessageAck(savedDbMessage.ack, currentAck);
+                if (mediaInfo) {
+                    savedDbMessage.hasMedia = true;
+                    savedDbMessage.mediaPath = mediaInfo.mediaPath;
+                    savedDbMessage.mediaMimeType = mediaInfo.mediaMimeType;
+                    savedDbMessage.mediaFileName = mediaInfo.mediaFileName;
+                }
+                await savedDbMessage.save();
+            }
+
+            pendingMessageAcks.delete(whatsappMessageId);
+
+            const msgData = {
+                id: savedDbMessage._id.toString(),
+                ticketId: ticket._id.toString(),
+                from: targetChatId,
+                senderName: 'Você',
+                phoneNumber: identifier,
+                profilePicUrl: profilePicUrl || '',
+                body: bodyContent,
+                ack: savedDbMessage.ack,
+                hasMedia: savedDbMessage.hasMedia,
+                mediaUrl: savedDbMessage.hasMedia ? `/api/messages/${savedDbMessage._id}/media` : null,
+                mediaMimeType: savedDbMessage.mediaMimeType || '',
+                mediaFileName: savedDbMessage.mediaFileName || '',
+                timestamp: new Date(savedDbMessage.createdAt || Date.now()).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+                fromMe: true
+            };
+
+            if (ioInstance) {
+                ioInstance.emit('new_message', {
+                    ticket,
+                    message: msgData
+                });
+            }
+        } catch (err) {
+            console.error('Erro no processamento da mensagem enviada (message_create):', err.message);
+        }
+    });
+
+    client.on('message_ack', async (msg, ack) => {
+        if (!msg.fromMe) return;
+
+        try {
+            const whatsappMessageId = getWhatsAppMessageId(msg);
+            if (!whatsappMessageId) return;
+
+            const previousAck = pendingMessageAcks.get(whatsappMessageId);
+            pendingMessageAcks.set(whatsappMessageId, mergeMessageAck(previousAck, ack));
+            setTimeout(() => pendingMessageAcks.delete(whatsappMessageId), 10 * 60 * 1000);
+
+            const savedMessage = await Message.findOneAndUpdate(
+                { whatsappMessageId },
+                { ack },
+                { new: true }
+            );
+
+            if (savedMessage && ioInstance) {
+                pendingMessageAcks.delete(whatsappMessageId);
+                console.log(`[ACK] Mensagem ${savedMessage._id}: ${ack}`);
+                ioInstance.emit('message_ack', {
+                    messageId: savedMessage._id.toString(),
+                    ticketId: savedMessage.ticketId.toString(),
+                    ack
+                });
+            } else {
+                console.log(`[ACK] Confirmacao ${ack} aguardando gravacao da mensagem`);
+            }
+        } catch (err) {
+            console.error('Erro ao atualizar confirmacao da mensagem:', err.message);
+        }
+    });
+
+    client.on('remote_session_saved', () => {
+        console.log('📌 Sessão remota vinculada e salva.');
+    });
+
+    client.on('change_state', state => {
+        console.log('🔄 Estado do cliente mudou para:', state);
+    });
+
+    client.on('disconnected', async (reason) => {
+        isClientReady = false;
+        currentQrCode = null;
+        console.warn(`⚠️ Cliente desconectado. Motivo: ${reason}`);
+
+        try {
+            await client.destroy();
+        } catch (err) {
+            console.error('Erro ao destruir client:', err);
+        }
+
+        setTimeout(() => initWhatsApp(ioInstance), 5000);
+    });
+
+    client.initialize().catch(err => console.error('❌ Falha ao inicializar o client:', err));
+}
+
+async function sendMessage({ number, message, file, fileUrl, fileBase64, mimeType, fileName, agentId }) {
+    if (!isClientReady || !client) {
+        throw new Error('O serviço de WhatsApp não está pronto. Tente novamente em alguns instantes.');
+    }
+
+    let messageToSend = message || '';
+    if (agentId) {
+        const agent = await Agent.findOne({ _id: agentId, active: true });
+        if (!agent) throw new Error('Agente nao encontrado ou inativo.');
+        messageToSend = `${agent.name}: ${messageToSend}`;
+    }
+
+    const cleanId = number.replace(/\D/g, '');
+    let targetJid;
+
+    if (number.includes('@g.us')) {
+        targetJid = number;
+    } else {
+        const resolvedId = await client.getNumberId(cleanId);
+        if (resolvedId && resolvedId._serialized) {
+            targetJid = resolvedId._serialized;
+        } else {
+            targetJid = `${cleanId}@c.us`;
+        }
+    }
+
+    return addToQueue(async () => {
+        let options = {};
+        let payloadToSend = messageToSend;
+
+        if (file) {
+            payloadToSend = new MessageMedia(file.mimetype, file.buffer.toString('base64'), file.originalname);
+            if (messageToSend) options.caption = messageToSend;
+        } else if (fileUrl) {
+            payloadToSend = await MessageMedia.fromUrl(fileUrl, { unsafeMime: true });
+            if (messageToSend) options.caption = messageToSend;
+        } else if (fileBase64) {
+            payloadToSend = new MessageMedia(mimeType || 'application/octet-stream', fileBase64, fileName || 'arquivo');
+            if (messageToSend) options.caption = messageToSend;
+        }
+
+        let pendingMedia = null;
+        if (payloadToSend instanceof MessageMedia) {
+            pendingMedia = {
+                targetJid,
+                createdAt: Date.now(),
+                media: {
+                    data: payloadToSend.data,
+                    mimetype: payloadToSend.mimetype,
+                    filename: payloadToSend.filename
+                }
+            };
+            pendingOutgoingMedia.push(pendingMedia);
+            setTimeout(() => {
+                const index = pendingOutgoingMedia.indexOf(pendingMedia);
+                if (index >= 0) pendingOutgoingMedia.splice(index, 1);
+            }, 60000);
+        }
+
+        // Apenas envia a mensagem pelo WhatsApp. 
+        // O evento 'message_create' vai capturar o envio e cuidar do banco de dados e do Socket.io sem duplicar.
+        try {
+            await client.sendMessage(targetJid, payloadToSend, options);
+        } catch (err) {
+            const index = pendingOutgoingMedia.indexOf(pendingMedia);
+            if (index >= 0) pendingOutgoingMedia.splice(index, 1);
+            throw err;
+        }
+
+        const textContent = (file || fileUrl || fileBase64) ? `[Arquivo] ${messageToSend}` : messageToSend;
+
+        return {
+            phoneNumber: cleanId,
+            body: textContent,
+            fromMe: true
+        };
+    });
+}
+
+async function getAllChats() {
+    if (!isClientReady || !client) {
+        throw new Error('O serviço de WhatsApp não está pronto.');
+    }
+
+    const chats = await client.getChats();
+    
+    return chats.map(chat => ({
+        id: chat.id._serialized,
+        name: chat.name || chat.formattedTitle || 'Desconhecido',
+        isGroup: chat.isGroup,
+        unreadCount: chat.unreadCount,
+        lastMessage: chat.lastMessage ? chat.lastMessage.body : null
+    }));
+}
+
+function destroyClient() {
+    if (client) return client.destroy();
+    return Promise.resolve();
+}
+
+function getStatus() {
+    return { isClientReady, currentQrCode };
+}
+
+module.exports = {
+    initWhatsApp,
+    sendMessage,
+    getStatus,
+    destroyClient,
+    getAllChats,
+    getProfilePicture,
+    getChatMetadata
+};
