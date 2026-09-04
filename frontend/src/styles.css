@@ -1,5 +1,6 @@
 :root { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #e2e8f0; background: #0f172a; font-synthesis: none; }
 * { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; }
 body { margin: 0; overflow: hidden; font-size: 13px; }
 @keyframes fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
@@ -12,7 +13,7 @@ body { margin: 0; overflow: hidden; font-size: 13px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.55); }
 button, input, select { font: inherit; }
 button { cursor: pointer; }
-.app-shell { display: flex; width: 100vw; height: 100vh; background: #0f172a; }
+.app-shell { display: flex; width: 100%; height: 100vh; height: 100dvh; background: #0f172a; }
 .sidebar { width: 256px; min-width: 256px; display: flex; flex-direction: column; justify-content: space-between; background: #1e293b; border-right: 1px solid #334155; transition: .18s; }
 .sidebar.collapsed { width: 76px; min-width: 76px; }
 .sidebar-brand { height: 64px; padding: 0 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #334155; }
@@ -25,6 +26,7 @@ button { cursor: pointer; }
 .sidebar nav button { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 16px; border: 0; border-radius: 9px; color: #94a3b8; background: transparent; text-align: left; font-size: 13px; }
 .sidebar nav button.active { color: white; background: #059669; }
 .sidebar nav button:hover:not(.active) { color: white; background: #334155; }
+.mobile-logout { display: none !important; }
 .collapsed nav { padding: 10px; }
 .collapsed nav button { justify-content: center; padding: 14px 0; }
 .sidebar footer { padding: 16px; border-top: 1px solid #334155; display: grid; gap: 14px; color: #94a3b8; font-size: 12px; }
@@ -79,6 +81,7 @@ button { cursor: pointer; }
 }
 .empty-chat { display: grid; place-items: center; color: #64748b; }
 .chat-header { min-height: 72px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 26px; background: rgba(30,41,59,.97); border-bottom: 1px solid #334155; box-shadow: 0 1px 3px rgba(2,6,23,.1); z-index: 2; }
+.mobile-back { display: none; }
 .chat-contact { display: flex; align-items: center; gap: 12px; }
 .chat-contact > div:last-child { display: grid; }
 .chat-contact small { color: #94a3b8; }
@@ -207,8 +210,73 @@ body[data-theme="light"] .message-link:hover { color: #1d4ed8; text-decoration-c
 body[data-theme="light"] input, body[data-theme="light"] select { color: #0f172a; background: #f8fafc; border-color: #cbd5e1; }
 body[data-theme="light"] .modal-backdrop { background: rgba(226,232,240,.96); }
 body[data-theme="light"] .agent-row.blocked { background: #fff7f7; }
-@media (max-width: 1100px) { .ticket-column { width: 350px; min-width: 320px; } .chat-title-line strong { max-width: 260px; } }
-@media (max-width: 900px) { .sidebar { display: none; } .ticket-column { width: 300px; min-width: 280px; } .settings-grid { grid-template-columns: 1fr; } .chat-actions button { padding: 9px; } .chat-actions button i + * { display: none; } }
+@media (max-width: 1100px) { .sidebar:not(.collapsed) { width: 220px; min-width: 220px; } .ticket-column { width: 350px; min-width: 320px; } .chat-title-line strong { max-width: 260px; } }
+@media (max-width: 900px) {
+    .app-shell { padding-bottom: calc(68px + env(safe-area-inset-bottom)); }
+    .sidebar, .sidebar.collapsed { position: fixed; left: 0; right: auto; bottom: 0; z-index: 50; width: 100vw !important; min-width: 100vw !important; max-width: none; height: calc(68px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); display: block; flex: none; border: 0; border-top: 1px solid #334155; }
+    .sidebar > div { width: 100%; height: 100%; }
+    .sidebar-brand { display: none; }
+    .sidebar footer { display: none; }
+    .sidebar nav, .collapsed nav { width: 100vw; max-width: none; height: 68px; margin: 0; padding: 5px max(5px, env(safe-area-inset-left)) 5px max(5px, env(safe-area-inset-right)); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: stretch; gap: 4px; }
+    .sidebar nav button, .collapsed nav button { width: 100%; min-width: 0; height: 58px; margin: 0; padding: 5px 2px; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 10px; line-height: 1.1; text-align: center; }
+    .sidebar nav .mobile-logout { display: flex !important; }
+    .sidebar nav button i { font-size: 17px; }
+    .sidebar nav button span { display: block !important; width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: center; }
+    .conversations-layout, .page { width: 100%; }
+    .ticket-column { width: 320px; min-width: 280px; }
+    .settings-grid { grid-template-columns: 1fr; }
+    .chat-header { padding: 0 14px; gap: 10px; }
+    .chat-actions button { width: 36px; height: 36px; padding: 0; }
+    .chat-actions button span { display: none; }
+    .chat-title-line { max-width: 30vw; }
+    .chat-title-line strong { max-width: 22vw; }
+    .messages { padding: 20px 18px; }
+    .page { padding: 24px; }
+}
+@media (max-width: 640px) {
+    .conversations-layout { position: relative; overflow: hidden; }
+    .ticket-column, .chat-panel { position: absolute; inset: 0; width: 100%; min-width: 0; }
+    .conversations-layout:not(.has-active-ticket) .chat-panel { display: none; }
+    .conversations-layout.has-active-ticket .ticket-column { display: none; }
+    .ticket-column > header { padding: 0 16px; }
+    .ticket-item { padding: 12px 14px; }
+    .mobile-back { width: 38px; height: 38px; flex: none; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; color: #cbd5e1; background: transparent; }
+    .chat-header { min-height: 64px; padding: 0 8px; gap: 4px; }
+    .chat-contact { min-width: 0; flex: 1; gap: 8px; }
+    .chat-contact .avatar { width: 38px; height: 38px; }
+    .chat-contact > div:last-child { min-width: 0; }
+    .chat-title-line { max-width: none; }
+    .chat-title-line strong { max-width: none; }
+    .chat-title-line .badge { display: none; }
+    .chat-contact small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .chat-actions { gap: 3px; }
+    .chat-actions button { width: 34px; height: 34px; }
+    .messages { padding: 14px 10px; }
+    .message-bubble { max-width: 88%; }
+    .composer { gap: 5px; padding: 8px max(8px, env(safe-area-inset-right)) 8px max(8px, env(safe-area-inset-left)); }
+    .composer label, .composer button { width: 40px; height: 40px; flex: none; }
+    .composer > input { height: 42px; padding: 0 13px; }
+    .scroll-to-bottom { right: 14px; bottom: 68px; }
+    .page { padding: 20px 14px; }
+    .page > header { margin-bottom: 16px; }
+    .card { padding: 20px 16px; border-radius: 13px; }
+    .settings-grid { gap: 16px; }
+    .agents-card { margin-top: 16px; }
+    .agent-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; padding: 11px; }
+    .agent-row span { min-width: 0; }
+    .agent-row small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .agent-row em { margin: 0; }
+    .agent-row > button { grid-column: 2 / -1; width: 100%; }
+    .status-card { margin: 24px auto; }
+    .status-card img { width: min(240px, 100%); }
+    .modal-backdrop, .media-viewer { padding: 14px; }
+}
+@media (max-width: 380px) {
+    .chat-contact .avatar { display: none; }
+    .chat-actions button { width: 32px; height: 32px; }
+    .message-bubble { max-width: 94%; }
+    .sidebar nav button, .collapsed nav button { font-size: 9px; }
+}
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0ms !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }

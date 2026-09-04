@@ -97,7 +97,7 @@ export default function App() {
 
   return <div className="app-shell">
     {agent && <Sidebar {...{ tab, setTab, agent, connected, collapsed, setCollapsed, logout }} />}
-    {agent && tab === 'tickets' && <main className="conversations-layout"><TicketList {...{ tickets, activeId: activeTicket?._id, unreadByTicket, onSelect: selectTicket, reload: loadTickets, theme, setTheme }} /><ChatPanel ticket={activeTicket} messages={messages} unreadMarker={unreadMarker} onSend={send} onFile={sendFile} onToggle={toggle} onClose={close} onOpenImage={setViewer} /></main>}
+    {agent && tab === 'tickets' && <main className={`conversations-layout ${activeTicket ? 'has-active-ticket' : ''}`}><TicketList {...{ tickets, activeId: activeTicket?._id, unreadByTicket, onSelect: selectTicket, reload: loadTickets, theme, setTheme }} /><ChatPanel ticket={activeTicket} messages={messages} unreadMarker={unreadMarker} onSend={send} onFile={sendFile} onToggle={toggle} onClose={close} onBack={() => { setActiveTicket(null); setMessages([]); }} onOpenImage={setViewer} /></main>}
     {agent && tab === 'dashboard' && <Dashboard connected={connected} qr={qr} />}
     {agent && tab === 'settings' && <Settings agent={agent} onAgentChange={setAgent} />}
     {!agent && <LoginModal onLogin={login} />}
