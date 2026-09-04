@@ -326,6 +326,7 @@ router.post('/tickets/start', requireAgent, async (req, res) => {
             {
                 $setOnInsert: {
                     isGroup: false,
+                    isTemporary: true,
                     status: 'pending',
                     lastMessage: '',
                     lastMessageAt: null
@@ -341,7 +342,29 @@ router.post('/tickets/start', requireAgent, async (req, res) => {
             { upsert: true, returnDocument: 'after' }
         );
 
-        res.json({ success: true, data: ticket });
+        res.json({
+            success: true,
+            data: { ...ticket.toObject(), name: contact.name }
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+router.post('/tickets/discard-temporary', requireAgent, async (req, res) => {
+    try {
+        const ticket = await Ticket.findOne({ _id: req.body?.ticketId, isTemporary: true });
+        if (!ticket) return res.json({ success: true, discarded: false });
+
+        const hasMessages = await Message.exists({ ticketId: ticket._id, isInternalEvent: { $ne: true } });
+        if (hasMessages) {
+            ticket.isTemporary = false;
+            await ticket.save();
+            return res.json({ success: true, discarded: false });
+        }
+
+        await Ticket.deleteOne({ _id: ticket._id, isTemporary: true });
+        res.json({ success: true, discarded: true });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }

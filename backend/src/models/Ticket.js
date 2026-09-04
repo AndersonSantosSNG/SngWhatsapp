@@ -10,7 +10,8 @@ const TicketSchema = new mongoose.Schema({
     lastMessage: { type: String, default: '' },
     lastMessageAt: { type: Date, default: null },
     updatedAt: { type: Date, default: Date.now },
-    profilePicUrl: { type: String, default: '' }
+    profilePicUrl: { type: String, default: '' },
+    isTemporary: { type: Boolean, default: false }
 });
 
 module.exports = mongoose.model('Ticket', TicketSchema);

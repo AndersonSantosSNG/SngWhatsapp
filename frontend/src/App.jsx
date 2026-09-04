@@ -47,7 +47,19 @@ export default function App() {
       if (result.qr) setQr(result.qr);
     } catch { setConnected(false); }
   }, []);
+  const discardTemporaryTicket = async ticket => {
+    if (!ticket?.isTemporary) return false;
+    try {
+      const result = await api('/tickets/discard-temporary', { method: 'POST', body: JSON.stringify({ ticketId: ticket._id }) });
+      if (result.discarded) setTickets(current => current.filter(item => item._id !== ticket._id));
+      return Boolean(result.discarded);
+    } catch (err) {
+      console.error('Não foi possível descartar a conversa temporária:', err);
+      return false;
+    }
+  };
   const selectTicket = async ticket => {
+    if (activeTicket?._id !== ticket._id) await discardTemporaryTicket(activeTicket);
     const unread = unreadByTicket[ticket._id] || null;
     setActiveTicket(ticket);
     setMessages([]);
@@ -134,12 +146,18 @@ export default function App() {
   const startConversation = async number => {
     const result = await api('/tickets/start', { method: 'POST', body: JSON.stringify({ phoneNumber: number }) });
     await loadTickets({ showLoading: false });
-    await selectTicket(result.data);
+    await selectTicket({ ...result.data, contactName: result.data.contactName || result.data.name });
   };
   const sendFile = async (file, caption) => { const data = await file.arrayBuffer(); let binary = ''; new Uint8Array(data).forEach(byte => { binary += String.fromCharCode(byte); }); await sendMessage({ number: activeTicket.phoneNumber, message: caption, fileBase64: btoa(binary), mimeType: file.type, fileName: file.name }); };
   const updateTicket = async action => { const result = await api(`/tickets/${action}`, { method: 'POST', body: JSON.stringify({ ticketId: activeTicket._id }) }); setActiveTicket(result.data); await loadTickets(); };
   const toggle = () => updateTicket(activeTicket.status === 'open' ? 'unclaim' : 'claim');
   const close = async () => { await updateTicket('close'); setActiveTicket(null); setMessages([]); };
+  const closeView = async () => {
+    const ticket = activeTicket;
+    setActiveTicket(null);
+    setMessages([]);
+    await discardTemporaryTicket(ticket);
+  };
 
   useEffect(() => {
     document.body.dataset.theme = theme;
@@ -156,7 +174,7 @@ export default function App() {
 
   return <div className="app-shell">
     {agent && <Sidebar {...{ tab, setTab, agent, connected, collapsed, setCollapsed, logout }} />}
-    {agent && tab === 'tickets' && <main className={`conversations-layout ${activeTicket ? 'has-active-ticket' : ''}`}><TicketList {...{ tickets, loading: ticketsLoading, activeId: activeTicket?._id, unreadByTicket, onSelect: selectTicket, reload: loadTickets, onNewConversation: startConversation, theme, setTheme }} /><ChatPanel ticket={activeTicket} messages={messages} unreadMarker={unreadMarker} contactOnline={contactOnline} onSend={send} onFile={sendFile} onToggle={toggle} onClose={close} onBack={() => { setActiveTicket(null); setMessages([]); }} onOpenImage={setViewer} /></main>}
+    {agent && tab === 'tickets' && <main className={`conversations-layout ${activeTicket ? 'has-active-ticket' : ''}`}><TicketList {...{ tickets, loading: ticketsLoading, activeId: activeTicket?._id, unreadByTicket, onSelect: selectTicket, reload: loadTickets, onNewConversation: startConversation, theme, setTheme }} /><ChatPanel ticket={activeTicket} messages={messages} unreadMarker={unreadMarker} contactOnline={contactOnline} onSend={send} onFile={sendFile} onToggle={toggle} onClose={close} onBack={closeView} onOpenImage={setViewer} /></main>}
     {agent && tab === 'dashboard' && <Dashboard connected={connected} qr={qr} />}
     {agent && tab === 'settings' && <Settings agent={agent} onAgentChange={setAgent} />}
     {!agent && <LoginModal onLogin={login} />}

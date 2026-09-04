@@ -729,6 +729,7 @@ function initWhatsApp(io) {
             } else {
                 ticket.lastMessage = bodyContent;
                 ticket.lastMessageAt = messageDate;
+                ticket.isTemporary = false;
                 ticket.whatsappId = whatsappId || ticket.whatsappId;
                 if (senderName) ticket.contactName = senderName;
                 if (profilePicUrl) ticket.profilePicUrl = profilePicUrl;
@@ -859,6 +860,7 @@ function initWhatsApp(io) {
             } else {
                 ticket.lastMessage = bodyContent;
                 ticket.lastMessageAt = messageDate;
+                ticket.isTemporary = false;
                 ticket.whatsappId = whatsappId || ticket.whatsappId;
                 if (chatName && chatName !== identifier) {
                     ticket.contactName = chatName;
@@ -1138,13 +1140,33 @@ async function getContactMetadata(number) {
     }
 
     const whatsappId = resolvedId._serialized;
-    const contact = await client.getContactById(whatsappId);
-    const phoneNumber = String(contact?.number || resolvedId.user || cleanNumber).replace(/\D/g, '');
-    const contactName = contact?.name || contact?.verifiedName || contact?.pushname || phoneNumber;
+    let contact = null;
+    let chat = null;
+    try { contact = await client.getContactById(whatsappId); } catch (err) {}
+    try { chat = await client.getChatById(whatsappId); } catch (err) {}
+    // O ID resolvido pode ser um LID interno do WhatsApp e nunca deve substituir
+    // o numero que o agente informou no painel.
+    const phoneNumber = cleanNumber;
+    const resolvedName = contact?.name
+        || contact?.verifiedName
+        || contact?.pushname
+        || chat?.name
+        || chat?.formattedTitle
+        || chat?.contact?.name
+        || chat?.contact?.verifiedName
+        || chat?.contact?.pushname
+        || '';
+    const resolvedNameText = String(resolvedName).trim();
+    const resolvedNameDigits = resolvedNameText.replace(/\D/g, '');
+    const isDifferentNumericId = /^[+\d\s()-]+$/.test(resolvedNameText)
+        && resolvedNameDigits !== phoneNumber;
+    const contactName = isDifferentNumericId
+        ? phoneNumber
+        : (resolvedNameText || phoneNumber);
     let profilePicUrl = '';
     try { profilePicUrl = await getProfilePicUrl(whatsappId); } catch (err) {}
 
-    return { phoneNumber, whatsappId, contactName, profilePicUrl };
+    return { phoneNumber, whatsappId, name: contactName, contactName, profilePicUrl };
 }
 
 function destroyClient() {
