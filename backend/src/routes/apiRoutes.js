@@ -13,10 +13,28 @@ const path = require('path');
 const crypto = require('crypto');
 const Agent = require('../models/Agent');
 const ApiClient = require('../models/ApiClient');
+const AgentSession = require('../models/AgentSession');
+const AuditLog = require('../models/AuditLog');
 const { hashApiKey } = require('../middlewares/auth');
 
-const agentSessions = new Map();
 const SESSION_DURATION_MS = 15 * 24 * 60 * 60 * 1000;
+
+function hashSessionToken(token) {
+    return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function audit(req, action, options = {}) {
+    return AuditLog.create({
+        action,
+        actorId: req.agent?._id || options.actorId || null,
+        actorName: req.agent?.name || options.actorName || '',
+        targetType: options.targetType || '',
+        targetId: String(options.targetId || ''),
+        success: options.success !== false,
+        ip: req.ip || '',
+        details: options.details || {}
+    }).catch(err => console.error('[AUDITORIA]', err.message));
+}
 
 function publicAgent(agent) {
     return { _id: agent._id, name: agent.name, corporateEmail: agent.corporateEmail, role: agent.role || 'agent', active: agent.active };
@@ -30,16 +48,18 @@ function verifyPassword(password, agent) {
 
 async function requireAgent(req, res, next) {
     try {
-        const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-        const session = agentSessions.get(token);
-        if (!session || session.expiresAt <= Date.now()) {
-            if (token) agentSessions.delete(token);
+        const cookieToken = String(req.headers.cookie || '').split(';').map(value => value.trim()).find(value => value.startsWith('agent_session='))?.split('=').slice(1).join('=');
+        const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || decodeURIComponent(cookieToken || '');
+        const tokenHash = token ? hashSessionToken(token) : '';
+        const session = tokenHash ? await AgentSession.findOne({ tokenHash, expiresAt: { $gt: new Date() } }) : null;
+        if (!session) {
             return res.status(401).json({ success: false, error: 'Sessao expirada. Entre novamente.' });
         }
         const agent = await Agent.findOne({ _id: session.agentId, active: true });
         if (!agent) return res.status(401).json({ success: false, error: 'Agente nao encontrado ou inativo.' });
         req.agent = agent;
-        req.agentToken = token;
+        req.agentTokenHash = tokenHash;
+        res.cookie('agent_session', token, { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production', maxAge: SESSION_DURATION_MS });
         next();
     } catch (err) {
         res.status(401).json({ success: false, error: 'Sessao invalida.' });
@@ -52,17 +72,23 @@ function requireAdmin(req, res, next) {
 }
 
 // --- ROTAS DE AUTENTICAÇÃO E QR CODE ---
-router.get('/qr', qrController.getQrCodeJson);
-router.get('/qr-image', qrController.getQrCodeImage);
+router.get('/health', (req, res) => res.json({ success: true, status: 'ok' }));
+router.get('/qr', requireAgent, qrController.getQrCodeJson);
+router.get('/qr-image', requireAgent, qrController.getQrCodeImage);
 
 router.post('/auth/login', async (req, res) => {
     try {
         const corporateEmail = (req.body.corporateEmail || '').trim().toLowerCase();
         const password = req.body.password || '';
         const agent = await Agent.findOne({ corporateEmail, active: true }).select('+passwordHash +passwordSalt');
-        if (!agent || !verifyPassword(password, agent)) return res.status(401).json({ success: false, error: 'Usuario ou senha invalidos.' });
+        if (!agent || !verifyPassword(password, agent)) {
+            await audit(req, 'auth.login_failed', { success: false, details: { corporateEmail } });
+            return res.status(401).json({ success: false, error: 'Usuario ou senha invalidos.' });
+        }
         const token = crypto.randomBytes(32).toString('hex');
-        agentSessions.set(token, { agentId: agent._id.toString(), expiresAt: Date.now() + SESSION_DURATION_MS });
+        await AgentSession.create({ tokenHash: hashSessionToken(token), agentId: agent._id, expiresAt: new Date(Date.now() + SESSION_DURATION_MS) });
+        await audit(req, 'auth.login', { actorId: agent._id, actorName: agent.name });
+        res.cookie('agent_session', token, { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production', maxAge: SESSION_DURATION_MS });
         res.json({ success: true, token, data: publicAgent(agent) });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -71,8 +97,10 @@ router.post('/auth/login', async (req, res) => {
 
 router.get('/auth/me', requireAgent, (req, res) => res.json({ success: true, data: publicAgent(req.agent) }));
 
-router.post('/auth/logout', requireAgent, (req, res) => {
-    agentSessions.delete(req.agentToken);
+router.post('/auth/logout', requireAgent, async (req, res) => {
+    await AgentSession.deleteOne({ tokenHash: req.agentTokenHash });
+    await audit(req, 'auth.logout');
+    res.clearCookie('agent_session', { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production' });
     res.json({ success: true });
 });
 
@@ -120,6 +148,7 @@ router.post('/agents', requireAgent, requireAdmin, async (req, res) => {
         const passwordHash = crypto.scryptSync(password, passwordSalt, 64).toString('hex');
         const role = req.body.role === 'admin' ? 'admin' : 'agent';
         const agent = await Agent.create({ name, corporateEmail, passwordSalt, passwordHash, role });
+        await audit(req, 'agent.create', { targetType: 'agent', targetId: agent._id, details: { corporateEmail, role } });
 
         res.status(201).json({
             success: true,
@@ -147,10 +176,9 @@ router.patch('/agents/:agentId/status', requireAgent, requireAdmin, async (req, 
         if (!agent) return res.status(404).json({ success: false, error: 'Agente nao encontrado.' });
 
         if (!active) {
-            for (const [token, session] of agentSessions.entries()) {
-                if (session.agentId === agent._id.toString()) agentSessions.delete(token);
-            }
+            await AgentSession.deleteMany({ agentId: agent._id });
         }
+        await audit(req, active ? 'agent.enable' : 'agent.disable', { targetType: 'agent', targetId: agent._id });
         res.json({ success: true, data: publicAgent(agent) });
     } catch (err) {
         res.status(400).json({ success: false, error: 'Nao foi possivel alterar o status do agente.' });
@@ -180,6 +208,7 @@ router.post('/api-clients', requireAgent, requireAdmin, async (req, res) => {
         const allowedOrigin = normalizeOrigin(req.body.url);
         const apiKey = `sng_${crypto.randomBytes(32).toString('hex')}`;
         const client = await ApiClient.create({ name, allowedOrigin, keyHash: hashApiKey(apiKey), keyPrefix: `${apiKey.slice(0, 12)}...`, createdBy: req.agent._id });
+        await audit(req, 'api_client.create', { targetType: 'api_client', targetId: client._id, details: { name, allowedOrigin } });
         res.status(201).json({ success: true, data: publicApiClient(client), apiKey });
     } catch (err) {
         res.status(400).json({ success: false, error: err.message || 'Não foi possível criar a integração.' });
@@ -190,6 +219,7 @@ router.patch('/api-clients/:clientId/status', requireAgent, requireAdmin, async 
     if (typeof req.body.active !== 'boolean') return res.status(400).json({ success: false, error: 'Status inválido.' });
     const client = await ApiClient.findByIdAndUpdate(req.params.clientId, { active: req.body.active }, { returnDocument: 'after' });
     if (!client) return res.status(404).json({ success: false, error: 'Integração não encontrada.' });
+    await audit(req, req.body.active ? 'api_client.enable' : 'api_client.disable', { targetType: 'api_client', targetId: client._id });
     res.json({ success: true, data: publicApiClient(client) });
 });
 
@@ -197,13 +227,21 @@ router.post('/api-clients/:clientId/rotate', requireAgent, requireAdmin, async (
     const apiKey = `sng_${crypto.randomBytes(32).toString('hex')}`;
     const client = await ApiClient.findByIdAndUpdate(req.params.clientId, { keyHash: hashApiKey(apiKey), keyPrefix: `${apiKey.slice(0, 12)}...`, active: true }, { returnDocument: 'after' });
     if (!client) return res.status(404).json({ success: false, error: 'Integração não encontrada.' });
+    await audit(req, 'api_client.rotate', { targetType: 'api_client', targetId: client._id });
     res.json({ success: true, data: publicApiClient(client), apiKey });
 });
 
 router.delete('/api-clients/:clientId', requireAgent, requireAdmin, async (req, res) => {
     const client = await ApiClient.findByIdAndDelete(req.params.clientId);
     if (!client) return res.status(404).json({ success: false, error: 'Integração não encontrada.' });
+    await audit(req, 'api_client.delete', { targetType: 'api_client', targetId: client._id, details: { name: client.name } });
     res.json({ success: true, message: 'Integração e chave excluídas permanentemente.' });
+});
+
+router.get('/audit-logs', requireAgent, requireAdmin, async (req, res) => {
+    const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || '100', 10)));
+    const logs = await AuditLog.find({}).sort({ createdAt: -1 }).limit(limit);
+    res.json({ success: true, data: logs });
 });
 
 router.post('/send-message', checkApiKey, upload.single('file'), messageController.handleSendMessage);
@@ -221,7 +259,7 @@ router.post(
 );
 
 // --- NOVA ROTA: LISTAR CHATS, NOMES E GRUPOS ---
-router.get('/whatsapp/chats', async (req, res) => {
+router.get('/whatsapp/chats', requireAgent, async (req, res) => {
     try {
         const chats = await whatsappService.getAllChats();
         res.json({ success: true, data: chats });
@@ -250,7 +288,7 @@ router.post('/whatsapp/sync-history', requireAgent, requireAdmin, async (req, re
 
 // --- ROTAS DO PAINEL INTERNO ---
 
-router.get('/tickets', async (req, res) => {
+router.get('/tickets', requireAgent, async (req, res) => {
     try {
         const { status } = req.query; 
         const filter = status ? { status } : {};
@@ -305,10 +343,18 @@ router.get('/tickets', async (req, res) => {
     }
 });
 
-router.get('/tickets/:ticketId/messages', async (req, res) => {
+router.get('/tickets/:ticketId/messages', requireAgent, async (req, res) => {
     try {
-        const messages = await Message.find({ ticketId: req.params.ticketId }).sort({ timestamp: 1 });
-        res.json({ success: true, data: messages });
+        const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || '100', 10)));
+        const filter = { ticketId: req.params.ticketId };
+        if (req.query.before) {
+            const before = new Date(req.query.before);
+            if (!Number.isNaN(before.getTime())) filter.timestamp = { $lt: before };
+        }
+        const descending = await Message.find(filter).sort({ timestamp: -1 }).limit(limit + 1);
+        const hasMore = descending.length > limit;
+        const messages = descending.slice(0, limit).reverse();
+        res.json({ success: true, data: messages, meta: { hasMore, limit } });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -379,7 +425,7 @@ router.post('/tickets/discard-temporary', requireAgent, async (req, res) => {
     }
 });
 
-router.get('/messages/:messageId/media', async (req, res) => {
+router.get('/messages/:messageId/media', requireAgent, async (req, res) => {
     try {
         const message = await Message.findById(req.params.messageId);
         if (!message?.hasMedia || !message.mediaPath) return res.status(404).end();
@@ -396,7 +442,7 @@ router.get('/messages/:messageId/media', async (req, res) => {
     }
 });
 
-router.get('/tickets/:ticketId/profile-picture', async (req, res) => {
+router.get('/tickets/:ticketId/profile-picture', requireAgent, async (req, res) => {
     try {
         const ticket = await Ticket.findById(req.params.ticketId);
         if (!ticket) {
@@ -421,17 +467,20 @@ router.get('/tickets/:ticketId/profile-picture', async (req, res) => {
 router.post('/tickets/claim', requireAgent, async (req, res) => {
     try {
         const { ticketId } = req.body;
-        const ticket = await Ticket.findByIdAndUpdate(
-            ticketId,
+        const ticket = await Ticket.findOneAndUpdate(
+            { _id: ticketId, status: { $ne: 'open' } },
             { assignedAgent: req.agent._id.toString(), status: 'open', updatedAt: new Date() },
             { returnDocument: 'after' }
         );
 
         if (!ticket) {
-            return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
+            const current = await Ticket.findById(ticketId);
+            if (!current) return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
+            return res.status(409).json({ success: false, error: 'Este atendimento já foi assumido por outro agente.', data: current });
         }
 
         await whatsappService.recordTicketEvent(ticket, req.agent, 'claimed');
+        await audit(req, 'ticket.claim', { targetType: 'ticket', targetId: ticket._id });
         res.json({ success: true, message: 'Atendimento assumido!', data: ticket });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -449,6 +498,7 @@ router.post('/tickets/close', requireAgent, async (req, res) => {
 
         if (!ticket) return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
         await whatsappService.recordTicketEvent(ticket, req.agent, 'closed');
+        await audit(req, 'ticket.close', { targetType: 'ticket', targetId: ticket._id });
         res.json({ success: true, message: 'Atendimento encerrado!', data: ticket });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -469,6 +519,7 @@ router.post('/tickets/unclaim', requireAgent, async (req, res) => {
         await ticket.save();
 
         await whatsappService.recordTicketEvent(ticket, req.agent, 'unclaimed');
+        await audit(req, 'ticket.unclaim', { targetType: 'ticket', targetId: ticket._id });
 
         return res.status(200).json({ success: true, data: ticket });
     } catch (err) {

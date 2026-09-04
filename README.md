@@ -1,283 +1,215 @@
 # SNG Chat
 
-Central de atendimento integrada ao WhatsApp, com frontend React/Vite, backend Node.js/Express, comunicação em tempo real por Socket.IO e persistência no MongoDB.
+Central de atendimento integrada ao WhatsApp, com painel React/Vite, API Node.js/Express, Socket.IO e MongoDB.
+
+## Recursos
+
+- Envio e recebimento de textos e arquivos.
+- Atendimentos pendentes, assumidos e encerrados, com eventos internos de auditoria.
+- Respostas com citação, confirmações de leitura e presença online.
+- Pesquisa, filtros, histórico paginado e sincronização de mensagens antigas.
+- Agentes autenticados, administração protegida e chaves individuais de integração.
+- Interface responsiva, aplicativo Android e testes automatizados.
 
 ## Estrutura
 
 ```text
-SngWhatsappAPI/
-├── backend/          # API Express, MongoDB, Socket.IO e WhatsApp Web
-├── frontend/         # Aplicação React/Vite
-├── sessions/         # Sessão local do WhatsApp (gerada automaticamente)
-├── storage/          # Mídias recebidas e enviadas
-├── .env              # Configurações privadas locais
-├── package.json      # Comandos executados na raiz
-└── start.js          # Inicializa frontend e backend juntos
+SngWhatsapp/
+├── backend/              API, Socket.IO, MongoDB e WhatsApp Web
+├── frontend/             React/Vite e projeto Android
+├── sessions/             sessão local do WhatsApp (gerada em execução)
+├── storage/              mídias recebidas e enviadas
+├── .github/workflows/    testes automáticos
+├── .env.example          modelo de configuração
+├── package.json          comandos gerais
+└── start.js              inicialização de desenvolvimento
 ```
 
 ## Pré-requisitos
 
-Instale na máquina:
+- Node.js 24 LTS (mínimo: `20.19` ou `22.12`).
+- npm, Git e MongoDB 7.
+- Docker Desktop no Windows ou Docker Engine no Linux, caso use o MongoDB deste guia.
 
-- Node.js `20.19` ou superior. Também são suportadas versões a partir da `22.12`.
-- npm, incluído na instalação do Node.js.
-- Docker Desktop.
-- Git, caso o projeto seja obtido de um repositório.
+> O Docker abaixo executa somente o MongoDB. A aplicação Node.js roda diretamente no sistema.
 
-Confirme as instalações no PowerShell:
+## Instalação no Windows
+
+Use o PowerShell.
+
+### 1. Obter o projeto e validar os programas
+
+Instale Git, Node.js 24 LTS e Docker Desktop. Abra o Docker Desktop e execute:
 
 ```powershell
+git --version
 node --version
 npm --version
 docker --version
-docker compose version
+git clone URL_DO_REPOSITORIO SngWhatsapp
+Set-Location SngWhatsapp
 ```
 
-Certifique-se de que o Docker Desktop esteja aberto antes de criar o MongoDB.
+Se o projeto já estiver na máquina, apenas abra sua pasta no PowerShell.
 
-## 1. Obter o projeto
-
-Clone o repositório ou copie a pasta do projeto para a máquina:
-
-```powershell
-git clone URL_DO_REPOSITORIO SngWhatsappAPI
-Set-Location SngWhatsappAPI
-```
-
-Todos os comandos seguintes devem ser executados na raiz, onde estão `start.js`, `frontend/` e `backend/`.
-
-## 2. Criar o MongoDB no Docker
-
-Crie um volume persistente:
+### 2. Criar o MongoDB
 
 ```powershell
 docker volume create sng_mongodb_data
-```
-
-Crie o container. A porta fica acessível somente na própria máquina:
-
-```powershell
 docker run -d --name sng-mongodb --restart unless-stopped -p 127.0.0.1:27017:27017 -v sng_mongodb_data:/data/db mongo:7
-```
-
-Confirme se o container iniciou:
-
-```powershell
 docker ps --filter "name=sng-mongodb"
-docker logs sng-mongodb
 ```
 
-Comandos úteis:
+Nas próximas inicializações, basta usar `docker start sng-mongodb`.
+
+### 3. Configurar e instalar
 
 ```powershell
-docker stop sng-mongodb
-docker start sng-mongodb
-docker restart sng-mongodb
+Copy-Item .env.example .env
+$keyBytes = New-Object byte[] 32
+[Security.Cryptography.RandomNumberGenerator]::Fill($keyBytes)
+[Convert]::ToHexString($keyBytes).ToLower()
 ```
 
-O volume `sng_mongodb_data` mantém agentes, tickets e mensagens mesmo quando o container é reiniciado ou recriado.
-
-## 3. Configurar o `.env`
-
-Crie o arquivo `.env` na raiz do projeto:
+Copie o valor gerado para `API_SECRET_KEY` no `.env`. Depois:
 
 ```powershell
-New-Item -ItemType File -Path .env -Force
+npm ci --prefix backend
+npm ci --prefix frontend
+npm test
+npm run build
 ```
 
-Adicione:
+Use `npm install` no lugar de `npm ci` apenas ao alterar dependências.
 
-```dotenv
-API_SECRET_KEY=COLOQUE_UMA_CHAVE_ALEATORIA_AQUI
-MONGODB_URI=mongodb://localhost:27017/sng_whatsapp
-PORT=3000
-# Quantidade de dias e limite de mensagens por conversa importadas do WhatsApp.
-HISTORY_SYNC_DAYS=30
-HISTORY_SYNC_LIMIT=1000
-# Use false para importar apenas textos e ignorar arquivos antigos.
-HISTORY_SYNC_MEDIA=true
-```
-
-Para gerar uma chave segura no PowerShell:
-
-```powershell
-$bytes = New-Object byte[] 32
-[Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-[Convert]::ToHexString($bytes).ToLower()
-```
-
-Copie o resultado para `API_SECRET_KEY`.
-
-Essa chave é usada somente pela rota de integração externa `/api/send-message`. Ela nunca deve ser colocada no frontend, enviada ao Git ou compartilhada publicamente. O `.env` já está ignorado pelo Git.
-
-## 4. Instalar as dependências
-
-Instale separadamente as dependências do backend e frontend:
-
-```powershell
-npm install --prefix backend
-npm install --prefix frontend
-```
-
-Não é necessário instalar dependências na raiz: o `start.js` usa apenas módulos nativos do Node.js.
-
-## 5. Criar o primeiro administrador
-
-Com o MongoDB em execução, rode:
+### 4. Criar o administrador e iniciar
 
 ```powershell
 npm --prefix backend run create-admin
-```
-
-Informe nome, e-mail corporativo e uma senha de pelo menos seis caracteres. O comando pode ser usado novamente para atualizar a senha e garantir o perfil administrativo de um e-mail existente.
-
-As senhas não são armazenadas em texto puro. Cada agente recebe um salt aleatório e o backend salva apenas o hash produzido com `scrypt`.
-
-## 6. Iniciar em desenvolvimento
-
-Na raiz do projeto:
-
-```powershell
 npm start
 ```
 
-Esse comando inicia simultaneamente:
-
-- Frontend React: <http://localhost:5173>
-- Backend/API: <http://localhost:3000>
-
-Abra <http://localhost:5173>, entre com o administrador criado e conecte o WhatsApp pela tela de Status e QR Code.
-
-Para encerrar frontend e backend, pressione `Ctrl + C` no terminal.
-
-### Iniciar separadamente
-
-Backend:
-
-```powershell
-npm run start:backend
-```
-
-Frontend:
-
-```powershell
-npm run start:frontend
-```
-
-## 7. Gerar e executar o build de produção
-
-Gere o frontend otimizado:
+Em desenvolvimento, abra <http://localhost:5173>. Para executar o build de produção:
 
 ```powershell
 npm run build
-```
-
-O resultado será salvo em `frontend/dist`. O backend Express serve esse diretório automaticamente.
-
-Inicie somente o backend:
-
-```powershell
 npm run start:backend
 ```
 
-Em produção, acesse:
+Nesse modo, abra <http://localhost:3000>.
 
-```text
-http://localhost:3000
-```
+## Instalação no Linux
 
-Sempre execute `npm run build` novamente depois de alterar o frontend.
+Os comandos de pacotes abaixo são para Ubuntu/Debian.
 
-## Dados persistentes e backup
+### 1. Obter o projeto e validar os programas
 
-Os diretórios abaixo não devem ser apagados durante atualizações:
+Instale Git, Docker Engine e Node.js 24 LTS pelo repositório da distribuição ou por um gerenciador como `nvm`.
 
-- `sessions/`: autenticação local do WhatsApp.
-- `storage/`: imagens, documentos, áudios e vídeos das mensagens.
-- Volume Docker `sng_mongodb_data`: banco MongoDB.
-
-Backup do MongoDB:
-
-```powershell
-docker exec sng-mongodb mongodump --db sng_whatsapp --archive=/tmp/sng_whatsapp.archive
-docker cp sng-mongodb:/tmp/sng_whatsapp.archive ./sng_whatsapp.archive
-```
-
-## Atualizar o projeto
-
-Depois de obter uma nova versão do código:
-
-```powershell
-npm install --prefix backend
-npm install --prefix frontend
-npm run build
-```
-
-Reinicie o processo da aplicação.
-
-## Solução de problemas
-
-### `spawn EINVAL`
-
-Certifique-se de estar usando o `start.js` atual e uma versão compatível do Node.js:
-
-```powershell
+```bash
+git --version
 node --version
-node --check start.js
+npm --version
+docker --version
+sudo systemctl enable --now docker
+git clone URL_DO_REPOSITORIO SngWhatsapp
+cd SngWhatsapp
 ```
 
-### MongoDB não conecta
+Use `sudo` nos comandos Docker se seu usuário não pertencer ao grupo `docker`.
 
-Confira o container e a porta:
+### 2. Criar o MongoDB
 
-```powershell
-docker ps --filter "name=sng-mongodb"
-Test-NetConnection localhost -Port 27017
+```bash
+docker volume create sng_mongodb_data
+docker run -d --name sng-mongodb --restart unless-stopped -p 127.0.0.1:27017:27017 -v sng_mongodb_data:/data/db mongo:7
+docker ps --filter name=sng-mongodb
 ```
 
-Confirme também:
+Nas próximas inicializações, use `docker start sng-mongodb`.
 
-```dotenv
-MONGODB_URI=mongodb://localhost:27017/sng_whatsapp
+### 3. Configurar o ambiente
+
+```bash
+cp .env.example .env
+openssl rand -hex 32
 ```
 
-### Porta ocupada
+Copie o resultado para `API_SECRET_KEY` no `.env`.
 
-Consulte o processo que está usando uma porta:
+### 4. Instalar as bibliotecas do Chromium
 
-```powershell
-Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
-Get-NetTCPConnection -LocalPort 5173 -ErrorAction SilentlyContinue
+O WhatsApp Web utiliza Chromium. Em uma instalação mínima do Ubuntu/Debian:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates fonts-liberation libasound2t64 libatk-bridge2.0-0 libatk1.0-0 libcups2 libdbus-1-3 libdrm2 libgbm1 libgtk-3-0 libnspr4 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxfixes3 libxkbcommon0 libxrandr2 xdg-utils
 ```
 
-### QR Code não aparece
+Em versões antigas, o pacote pode se chamar `libasound2` em vez de `libasound2t64`.
 
-- Aguarde o backend concluir a inicialização do WhatsApp Web.
-- Abra a aba `Status & QR Code`.
-- Verifique os logs do backend.
-- Se uma sessão válida já existir, o QR Code não será exibido.
+### 5. Instalar, testar e iniciar
 
-### Alterações do frontend não aparecem
-
-Em desenvolvimento, abra <http://localhost:5173>. Em produção, gere novamente o build:
-
-```powershell
+```bash
+npm ci --prefix backend
+npm ci --prefix frontend
+npm test
 npm run build
+npm --prefix backend run create-admin
+NODE_ENV=production npm run start:backend
 ```
 
-Depois use `Ctrl + F5` no navegador.
+Para criar o administrador sem perguntas:
 
-## Segurança
+```bash
+ADMIN_NAME="Administrador" ADMIN_EMAIL="admin@empresa.com" ADMIN_PASSWORD="SENHA_SEGURA" npm --prefix backend run create-admin
+```
 
-- Nunca envie `.env`, `sessions/` ou mídias privadas para o Git.
-- Não coloque `API_SECRET_KEY` em variáveis `VITE_*` ou no código React.
-- O painel usa a sessão autenticada do agente; a chave da API é reservada às integrações externas.
-- Use HTTPS e um proxy reverso quando publicar o sistema na internet.
-- Restrinja o acesso às portas `27017`, `3000` e `5173` conforme o ambiente.
+O painel ficará em `http://IP_DO_SERVIDOR:3000`. Em servidor público, use HTTPS com Nginx, Caddy ou outro proxy reverso.
 
-### Chaves da API por site
+## Configuração do `.env`
 
-Administradores podem criar credenciais em **Configurações > Nova integração**. Informe um nome e a origem do site, por exemplo `https://loja.exemplo.com.br`. A chave completa é exibida somente no momento da criação ou rotação e deve ser enviada no cabeçalho `X-API-Key`:
+| Variável | Obrigatória | Padrão | Descrição |
+|---|---:|---:|---|
+| `API_SECRET_KEY` | Sim | — | Chave mestre legada da API externa; nunca deve ir para o frontend. |
+| `MONGODB_URI` | Sim | — | Endereço do MongoDB. |
+| `PORT` | Não | `3000` | Porta do backend e do painel em produção. |
+| `NODE_ENV` | Não | — | Use `production` no servidor HTTPS para cookies seguros. |
+| `HISTORY_SYNC_DAYS` | Não | `30` | Dias buscados na sincronização do histórico. |
+| `HISTORY_SYNC_LIMIT` | Não | `1000` | Máximo de mensagens importadas por conversa. |
+| `HISTORY_SYNC_MEDIA` | Não | `true` | Use `false` para ignorar mídias antigas. |
+
+`ADMIN_NAME`, `ADMIN_EMAIL` e `ADMIN_PASSWORD` são opcionais e usados apenas na criação não interativa do administrador.
+
+## Primeiro acesso
+
+1. Entre no painel com o administrador criado.
+2. Abra **Status & QR Code**.
+3. No celular, acesse **WhatsApp > Aparelhos conectados > Conectar um aparelho**.
+4. Leia o QR Code e aguarde a conexão.
+
+A autenticação fica em `sessions/`; preserve essa pasta para evitar um novo QR Code a cada reinício.
+
+## Testes
+
+```bash
+npm test
+npm run test:backend
+npm run test:frontend
+```
+
+Modo contínuo durante o desenvolvimento:
+
+```bash
+npm --prefix backend run test:watch
+npm --prefix frontend run test:watch
+```
+
+Os testes de backend usam um MongoDB temporário e não alteram o banco do `.env`. O workflow `.github/workflows/tests.yml` executa testes e build em cada `push` e `pull request`.
+
+## API para integrações
+
+Administradores criam credenciais em **Configurações > Nova integração**, informando nome e origem autorizada, como `https://loja.exemplo.com.br`. A chave só aparece integralmente na criação ou rotação:
 
 ```http
 POST /api/send-message
@@ -290,4 +222,89 @@ X-API-Key: sng_CHAVE_GERADA
 }
 ```
 
-Chamadas feitas por navegador têm o cabeçalho `Origin` validado contra a URL cadastrada. Chamadas servidor-a-servidor são autenticadas pela chave. A variável antiga `API_SECRET_KEY` continua aceita para permitir migração gradual.
+- Chaves de integração não concedem acesso administrativo.
+- Funções administrativas exigem a sessão de um agente administrador.
+- Requisições de navegador têm a origem comparada à URL cadastrada.
+- A chave do `.env` continua aceita na API externa para compatibilidade.
+- Exclua ou rotacione imediatamente uma chave comprometida.
+
+## Dados e backup
+
+Preserve `sessions/`, `storage/` e o volume `sng_mongodb_data` durante atualizações.
+
+Backup:
+
+```bash
+docker exec sng-mongodb mongodump --db sng_whatsapp --archive=/tmp/sng_whatsapp.archive
+docker cp sng-mongodb:/tmp/sng_whatsapp.archive ./sng_whatsapp.archive
+```
+
+Restauração:
+
+```bash
+docker cp ./sng_whatsapp.archive sng-mongodb:/tmp/sng_whatsapp.archive
+docker exec sng-mongodb mongorestore --archive=/tmp/sng_whatsapp.archive --drop
+```
+
+`--drop` substitui as coleções atuais. Faça um backup antes de restaurar.
+
+## Atualização
+
+```bash
+git pull
+npm ci --prefix backend
+npm ci --prefix frontend
+npm test
+npm run build
+```
+
+Depois, reinicie o processo do backend.
+
+## Solução de problemas
+
+### MongoDB não conecta
+
+```bash
+docker ps --filter name=sng-mongodb
+docker logs sng-mongodb
+```
+
+Confirme `MONGODB_URI=mongodb://127.0.0.1:27017/sng_whatsapp`. No Windows, teste com `Test-NetConnection 127.0.0.1 -Port 27017`; no Linux, use `ss -ltn | grep 27017`.
+
+### Porta ocupada
+
+Windows:
+
+```powershell
+Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
+Get-NetTCPConnection -LocalPort 5173 -ErrorAction SilentlyContinue
+```
+
+Linux:
+
+```bash
+ss -ltnp | grep -E ':3000|:5173'
+```
+
+### QR Code não aparece
+
+- Aguarde o WhatsApp Web inicializar e confira os logs.
+- Verifique a conexão com a internet.
+- Uma sessão válida em `sessions/` dispensa novo QR Code.
+
+### Chromium não inicia no Linux
+
+Instale as bibliotecas indicadas acima e verifique memória, permissões de `sessions/` e `storage/` e os logs completos do backend.
+
+### Frontend desatualizado em produção
+
+Execute `npm run build`, reinicie o backend e atualize o navegador ignorando o cache.
+
+## Segurança de produção
+
+- Nunca envie `.env`, `sessions/`, backups ou mídias privadas para o Git.
+- Nunca coloque segredos em variáveis `VITE_*` ou no React.
+- Publique somente por HTTPS e não exponha a porta `27017`.
+- Restrinja o firewall, remova agentes antigos e revogue chaves sem uso.
+- Mantenha backups criptografados e teste sua restauração.
+- Execute `npm test` e `npm run build` antes de publicar.

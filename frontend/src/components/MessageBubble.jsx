@@ -19,7 +19,7 @@ function LinkifiedText({ text }) {
   });
 }
 
-export default function MessageBubble({ message, isGroup, onImage, onReply }) {
+export default function MessageBubble({ message, isGroup, onImage, onReply, onQuotedClick }) {
   if (message.isInternalEvent) {
     const eventDate = new Date(message.timestamp || message.createdAt || Date.now()).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
     const icons = { claimed: 'fa-user-check', unclaimed: 'fa-arrow-rotate-left', closed: 'fa-circle-check' };
@@ -33,5 +33,5 @@ export default function MessageBubble({ message, isGroup, onImage, onReply }) {
   const groupSender = message.groupSenderName || message.senderName;
   const ack = Number(message.ack ?? 0);
   const ackLabel = ack >= 4 ? 'Reproduzida' : ack >= 3 ? 'Lida' : ack >= 2 ? 'Entregue' : ack >= 1 ? 'Enviada' : ack < 0 ? 'Falha no envio' : 'Aguardando envio';
-  return <div className={`message-row ${fromMe ? 'mine' : 'theirs'}`}>{onReply && <button type="button" className="reply-message-button" onClick={() => onReply(message)} title="Responder" aria-label="Responder mensagem"><i className="fa-solid fa-reply" /></button>}<div className="message-bubble">{message.quotedBody && <div className="quoted-message"><strong>{message.quotedSenderName || 'Mensagem'}</strong><span>{message.quotedBody}</span></div>}{isGroup && !fromMe && groupSender && <strong className="group-sender">{groupSender}</strong>}<Media message={message} onImage={onImage} />{message.body && !(message.mediaUrl && placeholder) && <p><LinkifiedText text={message.body} /></p>}<span className="message-time">{time}{fromMe && <i title={ackLabel} aria-label={ackLabel} className={`message-ack fa-solid ${ack >= 2 ? 'fa-check-double' : ack < 0 ? 'fa-circle-exclamation' : 'fa-check'} ${ack >= 3 ? 'read' : ''} ${ack < 0 ? 'error' : ''}`} />}</span></div></div>;
+  return <div className={`message-row ${fromMe ? 'mine' : 'theirs'}`}>{onReply && <button type="button" className="reply-message-button" onClick={() => onReply(message)} title="Responder" aria-label="Responder mensagem"><i className="fa-solid fa-reply" /></button>}<div className="message-bubble">{message.quotedBody && <button type="button" className="quoted-message" onClick={() => onQuotedClick?.(message)} title="Ir para a mensagem citada" aria-label="Ir para a mensagem citada"><strong>{message.quotedSenderName || 'Mensagem'}</strong><span>{message.quotedBody}</span></button>}{isGroup && !fromMe && groupSender && <strong className="group-sender">{groupSender}</strong>}<Media message={message} onImage={onImage} />{message.body && !(message.mediaUrl && placeholder) && <p><LinkifiedText text={message.body} /></p>}<span className="message-time">{time}{fromMe && <i title={ackLabel} aria-label={ackLabel} className={`message-ack fa-solid ${ack >= 2 ? 'fa-check-double' : ack < 0 ? 'fa-circle-exclamation' : 'fa-check'} ${ack >= 3 ? 'read' : ''} ${ack < 0 ? 'error' : ''}`} />}</span></div></div>;
 }

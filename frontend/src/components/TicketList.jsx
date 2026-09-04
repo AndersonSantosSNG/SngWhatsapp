@@ -26,7 +26,7 @@ function formatLastMessageTime(value) {
   return `${dateText} às ${time} (há ${calendarDays} dias)`;
 }
 
-export default function TicketList({ tickets, loading, activeId, unreadByTicket, onSelect, reload, onNewConversation, theme, setTheme }) {
+export default function TicketList({ tickets, loading, activeId, agentId, unreadByTicket, onSelect, reload, onNewConversation, theme, setTheme }) {
   const [search, setSearch] = useState('');
   const [showNewConversation, setShowNewConversation] = useState(false);
   const [sending, setSending] = useState(false);
@@ -34,8 +34,15 @@ export default function TicketList({ tickets, loading, activeId, unreadByTicket,
   const [newPhone, setNewPhone] = useState('');
   const [international, setInternational] = useState(false);
   const [countryCode, setCountryCode] = useState('');
+  const [filter, setFilter] = useState('all');
   const normalizedSearch = search.trim().toLocaleLowerCase('pt-BR');
   const visibleTickets = tickets.filter(ticket => {
+    if (filter === 'pending' && ticket.status !== 'pending') return false;
+    if (filter === 'open' && ticket.status !== 'open') return false;
+    if (filter === 'closed' && ticket.status !== 'closed') return false;
+    if (filter === 'unread' && !(unreadByTicket[ticket._id]?.count > 0)) return false;
+    if (filter === 'groups' && !ticket.isGroup) return false;
+    if (filter === 'mine' && String(ticket.assignedAgent || '') !== String(agentId || '')) return false;
     if (!normalizedSearch) return true;
     const name = (ticket.contactName || '').toLocaleLowerCase('pt-BR');
     const phone = String(ticket.phoneNumber || '').toLocaleLowerCase('pt-BR');
@@ -71,6 +78,7 @@ export default function TicketList({ tickets, loading, activeId, unreadByTicket,
       <button onClick={reload} title="Recarregar"><i className="fa-solid fa-rotate-right" /></button>
     </div></header>
     <div className="conversation-search"><i className="fa-solid fa-magnifying-glass" /><input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Pesquisar nome ou número" aria-label="Pesquisar conversas" />{search && <button type="button" onClick={() => setSearch('')} aria-label="Limpar pesquisa"><i className="fa-solid fa-xmark" /></button>}</div>
+    <div className="ticket-filters">{[['all', 'Todas'], ['mine', 'Meus atendimentos'], ['pending', 'Pendentes'], ['open', 'Em atendimento'], ['closed', 'Encerradas'], ['unread', 'Não lidas'], ['groups', 'Grupos']].map(([value, label]) => <button type="button" key={value} className={filter === value ? 'active' : ''} onClick={() => setFilter(value)}>{label}</button>)}</div>
     <div className="ticket-list">
       {loading && <div className="ticket-loading" role="status" aria-label="Carregando conversas"><div className="ticket-spinner" /><span>Carregando conversas...</span></div>}
       {!loading && !visibleTickets.length && <p className="empty">{search ? 'Nenhuma conversa encontrada para esta busca.' : 'Nenhuma conversa encontrada.'}</p>}

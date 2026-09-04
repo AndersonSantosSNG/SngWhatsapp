@@ -23,4 +23,7 @@ const MessageSchema = new mongoose.Schema({
     timestamp: { type: Date, default: Date.now }
 });
 
+MessageSchema.index({ ticketId: 1, timestamp: -1 });
+MessageSchema.index({ phoneNumber: 1, timestamp: -1 });
+
 module.exports = mongoose.model('Message', MessageSchema);

@@ -1,0 +1,38 @@
+name: Testes
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Baixar codigo
+        uses: actions/checkout@v4
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Instalar dependencias do backend
+        run: npm ci --prefix backend
+
+      - name: Instalar dependencias do frontend
+        run: npm ci --prefix frontend
+
+      - name: Executar todos os testes
+        run: npm test
+
+      - name: Validar build de producao
+        run: npm run build

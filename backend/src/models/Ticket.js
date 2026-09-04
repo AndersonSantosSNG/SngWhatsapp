@@ -14,4 +14,7 @@ const TicketSchema = new mongoose.Schema({
     isTemporary: { type: Boolean, default: false }
 });
 
+TicketSchema.index({ status: 1, updatedAt: -1 });
+TicketSchema.index({ assignedAgent: 1, updatedAt: -1 });
+
 module.exports = mongoose.model('Ticket', TicketSchema);

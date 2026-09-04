@@ -11,6 +11,9 @@
     "dev": "node start.js",
     "build": "npm --prefix frontend run build",
     "start:backend": "npm --prefix backend start",
-    "start:frontend": "npm --prefix frontend run dev"
+    "start:frontend": "npm --prefix frontend run dev",
+    "test": "npm --prefix backend test && npm --prefix frontend test",
+    "test:backend": "npm --prefix backend test",
+    "test:frontend": "npm --prefix frontend test"
   }
 }
