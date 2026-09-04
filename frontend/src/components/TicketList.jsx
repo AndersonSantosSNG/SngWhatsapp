@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Avatar from './Avatar';
+import { formatPhone, maskNationalPhone } from '../utils/phone';
 
 function formatLastMessageTime(value) {
   if (!value) return '';
@@ -30,6 +31,9 @@ export default function TicketList({ tickets, loading, activeId, unreadByTicket,
   const [showNewConversation, setShowNewConversation] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+  const [international, setInternational] = useState(false);
+  const [countryCode, setCountryCode] = useState('');
   const normalizedSearch = search.trim().toLocaleLowerCase('pt-BR');
   const visibleTickets = tickets.filter(ticket => {
     if (!normalizedSearch) return true;
@@ -40,14 +44,19 @@ export default function TicketList({ tickets, loading, activeId, unreadByTicket,
   });
   const submitNewConversation = async event => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const number = String(form.get('number') || '').replace(/\D/g, '');
-    if (number.length < 10 || number.length > 15) return setSendError('Informe o número com DDD e código do país.');
+    const localNumber = newPhone.replace(/\D/g, '');
+    const code = international ? countryCode.replace(/\D/g, '') : '55';
+    const number = `${code}${localNumber}`;
+    if (localNumber.length < 10 || localNumber.length > 11) return setSendError('Informe o DDD e o telefone corretamente.');
+    if (international && (!code || number.length > 15)) return setSendError('Informe um código de país válido.');
     setSending(true);
     setSendError('');
     try {
       await onNewConversation(number);
       setShowNewConversation(false);
+      setNewPhone('');
+      setCountryCode('');
+      setInternational(false);
     } catch (err) {
       setSendError(err.message || 'Não foi possível abrir a conversa.');
     } finally {
@@ -67,14 +76,15 @@ export default function TicketList({ tickets, loading, activeId, unreadByTicket,
       {!loading && !visibleTickets.length && <p className="empty">{search ? 'Nenhuma conversa encontrada para esta busca.' : 'Nenhuma conversa encontrada.'}</p>}
       {!loading && visibleTickets.map(ticket => {
         const generic = ['', 'Grupo', 'Grupo sem nome', 'Grupo do WhatsApp'];
-        const name = ticket.isGroup ? (generic.includes((ticket.contactName || '').trim()) ? 'Grupo do WhatsApp' : ticket.contactName) : (ticket.contactName || ticket.phoneNumber);
+        const rawName = ticket.contactName || ticket.phoneNumber;
+        const name = ticket.isGroup ? (generic.includes((ticket.contactName || '').trim()) ? 'Grupo do WhatsApp' : ticket.contactName) : (/^\+?\d+$/.test(String(rawName)) ? formatPhone(rawName) : rawName);
         const unreadCount = unreadByTicket[ticket._id]?.count || 0;
         const lastMessageTime = formatLastMessageTime(ticket.lastMessageAt);
         return <button type="button" key={ticket._id} className={`ticket-item ${activeId === ticket._id ? 'selected' : ''} ${unreadCount ? 'unread' : ''}`} onClick={() => onSelect(ticket)}>
-          <Avatar ticket={ticket} /><span className="ticket-content"><span className="ticket-top"><strong>{name}</strong>{unreadCount > 0 && <span className="unread-count" aria-label={`${unreadCount} mensagens novas`}>{unreadCount > 99 ? '99+' : unreadCount}</span>}<em className={`badge ${ticket.status}`}>{ticket.status === 'closed' ? 'Encerrado' : ticket.status === 'open' ? 'Em atendimento' : 'Pendente'}</em></span><span className="ticket-meta"><small>{ticket.isGroup ? 'Grupo' : ticket.phoneNumber}</small>{lastMessageTime && <time dateTime={ticket.lastMessageAt}>{lastMessageTime}</time>}</span><span className="last-message">{ticket.lastMessage === '[Mídia/Arquivo]' ? '📎 Mídia' : ticket.lastMessage || 'Sem mensagens'}</span></span>
+          <Avatar ticket={ticket} /><span className="ticket-content"><span className="ticket-top"><strong>{name}</strong>{unreadCount > 0 && <span className="unread-count" aria-label={`${unreadCount} mensagens novas`}>{unreadCount > 99 ? '99+' : unreadCount}</span>}<em className={`badge ${ticket.status}`}>{ticket.status === 'closed' ? 'Encerrado' : ticket.status === 'open' ? 'Em atendimento' : 'Pendente'}</em></span><span className="ticket-meta"><small>{ticket.isGroup ? 'Grupo' : formatPhone(ticket.phoneNumber)}</small>{lastMessageTime && <time dateTime={ticket.lastMessageAt}>{lastMessageTime}</time>}</span><span className="last-message">{ticket.lastMessage === '[Mídia/Arquivo]' ? '📎 Mídia' : ticket.lastMessage || 'Sem mensagens'}</span></span>
         </button>;
       })}
     </div>
-    {showNewConversation && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !sending) setShowNewConversation(false); }}><form className="card new-conversation-card" onSubmit={submitNewConversation}><div className="new-conversation-title"><i className="fa-solid fa-comment-medical" /><div><h2>Nova conversa</h2><p>Informe o número para abrir a conversa sem enviar uma mensagem.</p></div></div><label>Número do WhatsApp<input name="number" type="tel" inputMode="tel" placeholder="Ex.: 5511999999999" required autoFocus /></label>{sendError && <p className="form-error">{sendError}</p>}<div className="new-conversation-actions"><button type="button" onClick={() => setShowNewConversation(false)} disabled={sending}>Cancelar</button><button type="submit" className="submit-button" disabled={sending}>{sending ? 'Abrindo...' : 'Abrir conversa'}</button></div></form></div>}
+    {showNewConversation && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !sending) setShowNewConversation(false); }}><form className="card new-conversation-card" onSubmit={submitNewConversation}><div className="new-conversation-title"><i className="fa-solid fa-comment-medical" /><div><h2>Nova conversa</h2><p>Informe o DDD e o telefone para abrir a conversa.</p></div></div><label className="international-option"><input type="checkbox" checked={international} onChange={event => { setInternational(event.target.checked); setCountryCode(''); setSendError(''); }} /><span>É número internacional?</span></label>{international && <label>Código do país<input type="tel" inputMode="numeric" value={countryCode} onChange={event => setCountryCode(event.target.value.replace(/\D/g, '').slice(0, 3))} placeholder="Ex.: 1" required autoFocus /></label>}<label>DDD + telefone<input type="tel" inputMode="numeric" value={newPhone} onChange={event => setNewPhone(maskNationalPhone(event.target.value))} placeholder="(99) 99999-9999" required autoFocus={!international} /></label>{sendError && <p className="form-error">{sendError}</p>}<div className="new-conversation-actions"><button type="button" onClick={() => setShowNewConversation(false)} disabled={sending}>Cancelar</button><button type="submit" className="submit-button" disabled={sending}>{sending ? 'Abrindo...' : 'Abrir conversa'}</button></div></form></div>}
   </section>;
 }

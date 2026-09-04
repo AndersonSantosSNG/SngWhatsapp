@@ -28,9 +28,21 @@ export default function App() {
   const [viewer, setViewer] = useState('');
   const [theme, setThemeState] = useState(storage.get('panelTheme', 'dark'));
   const [collapsed, setCollapsedState] = useState(storage.get('sidebarCollapsed') === 'true');
+  const [authNotice, setAuthNotice] = useState('');
 
   const setTheme = value => { setThemeState(value); storage.set('panelTheme', value); };
   const setCollapsed = value => { setCollapsedState(value); storage.set('sidebarCollapsed', value); };
+  useEffect(() => {
+    const handleSessionExpired = event => {
+      storage.remove('agentAuthToken');
+      setAgent(null);
+      setActiveTicket(null);
+      setMessages([]);
+      setAuthNotice(event.detail?.message || 'Sua sessão expirou. Entre novamente para continuar.');
+    };
+    window.addEventListener('session-expired', handleSessionExpired);
+    return () => window.removeEventListener('session-expired', handleSessionExpired);
+  }, []);
   const loadTickets = useCallback(async ({ showLoading = true } = {}) => {
     if (showLoading) setTicketsLoading(true);
     try {
@@ -140,7 +152,7 @@ export default function App() {
     return () => { active = false; clearInterval(interval); };
   }, [agent, activeTicket?._id, activeTicket?.isGroup, activeTicket?.phoneNumber, activeTicket?.whatsappId]);
 
-  const login = async (corporateEmail, password) => { const result = await api('/auth/login', { method: 'POST', body: JSON.stringify({ corporateEmail, password }) }); storage.set('agentAuthToken', result.token); setAgent(result.data); await loadTickets(); };
+  const login = async (corporateEmail, password) => { const result = await api('/auth/login', { method: 'POST', body: JSON.stringify({ corporateEmail, password }) }); storage.set('agentAuthToken', result.token); setAuthNotice(''); setAgent(result.data); await loadTickets(); };
   const logout = async () => { try { await api('/auth/logout', { method: 'POST' }); } catch {} storage.remove('agentAuthToken'); setUnreadByTicket({}); setUnreadMarker(null); setAgent(null); };
   const send = message => sendMessage({ number: activeTicket.phoneNumber, message });
   const startConversation = async number => {
@@ -178,7 +190,7 @@ export default function App() {
     {agent && tab === 'tickets' && <main className={`conversations-layout ${activeTicket ? 'has-active-ticket' : ''}`}><TicketList {...{ tickets, loading: ticketsLoading, activeId: activeTicket?._id, unreadByTicket, onSelect: selectTicket, reload: loadTickets, onNewConversation: startConversation, theme, setTheme }} /><ChatPanel ticket={activeTicket} messages={messages} unreadMarker={unreadMarker} contactOnline={contactOnline} onSend={send} onFile={sendFile} onToggle={toggle} onClose={close} onBack={closeView} onOpenImage={setViewer} /></main>}
     {agent && tab === 'dashboard' && <Dashboard connected={connected} qr={qr} />}
     {agent && tab === 'settings' && <Settings agent={agent} onAgentChange={setAgent} />}
-    {!agent && <LoginModal onLogin={login} />}
+    {!agent && <LoginModal onLogin={login} notice={authNotice} />}
     {viewer && <div className="media-viewer" onClick={() => setViewer('')}><button><i className="fa-solid fa-xmark" /></button><img src={viewer} alt="Visualização da mídia" /></div>}
   </div>;
 }

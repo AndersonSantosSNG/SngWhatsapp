@@ -16,7 +16,7 @@ const ApiClient = require('../models/ApiClient');
 const { hashApiKey } = require('../middlewares/auth');
 
 const agentSessions = new Map();
-const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
+const SESSION_DURATION_MS = 15 * 24 * 60 * 60 * 1000;
 
 function publicAgent(agent) {
     return { _id: agent._id, name: agent.name, corporateEmail: agent.corporateEmail, role: agent.role || 'agent', active: agent.active };
