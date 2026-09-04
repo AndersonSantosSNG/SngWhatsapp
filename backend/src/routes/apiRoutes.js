@@ -342,9 +342,17 @@ router.post('/tickets/start', requireAgent, async (req, res) => {
             { upsert: true, returnDocument: 'after' }
         );
 
+        const hasMessages = await Message.exists({
+            ticketId: ticket._id,
+            isInternalEvent: { $ne: true }
+        });
+        ticket.isTemporary = !hasMessages;
+        await ticket.save();
+
         res.json({
             success: true,
-            data: { ...ticket.toObject(), name: contact.name }
+            data: { ...ticket.toObject(), name: contact.name },
+            whatsappPayload: contact.rawPayload
         });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });

@@ -145,6 +145,7 @@ export default function App() {
   const send = message => sendMessage({ number: activeTicket.phoneNumber, message });
   const startConversation = async number => {
     const result = await api('/tickets/start', { method: 'POST', body: JSON.stringify({ phoneNumber: number }) });
+    console.log('[NOVA CONVERSA][PAYLOAD WHATSAPP]', result.whatsappPayload);
     await loadTickets({ showLoading: false });
     await selectTicket({ ...result.data, contactName: result.data.contactName || result.data.name });
   };

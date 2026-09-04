@@ -1144,29 +1144,68 @@ async function getContactMetadata(number) {
     let chat = null;
     try { contact = await client.getContactById(whatsappId); } catch (err) {}
     try { chat = await client.getChatById(whatsappId); } catch (err) {}
+    let loadedName = '';
+    try {
+        loadedName = await client.pupPage.evaluate(async ({ ids, fallbackNumber }) => {
+            for (const id of ids) {
+                try {
+                    const wid = window.require('WAWebWidFactory').createWid(id);
+                    const collections = window.require('WAWebCollections');
+                    let internalChat = collections.Chat.get(wid) || collections.Chat.get(id);
+                    if (!internalChat) {
+                        internalChat = await window.require('WAWebFindChatAction').findOrCreateLatestChat(wid);
+                    }
+
+                    const internalContact = internalChat?.contact || await collections.Contact.find(wid);
+                    const getters = window.require('WAWebContactGetters');
+                    const candidates = [
+                        getters.getName(internalContact),
+                        getters.getVerifiedName(internalContact),
+                        getters.getPushname(internalContact),
+                        internalChat?.formattedTitle,
+                        internalChat?.name
+                    ];
+                    const name = candidates.find(value => value && String(value).trim() && String(value).replace(/\D/g, '') !== fallbackNumber);
+                    if (name) return String(name).trim();
+                } catch (err) {}
+            }
+            return '';
+        }, { ids: [whatsappId, `${cleanNumber}@c.us`], fallbackNumber: cleanNumber });
+    } catch (err) {}
     // O ID resolvido pode ser um LID interno do WhatsApp e nunca deve substituir
     // o numero que o agente informou no painel.
     const phoneNumber = cleanNumber;
-    const resolvedName = contact?.name
-        || contact?.verifiedName
-        || contact?.pushname
-        || chat?.name
-        || chat?.formattedTitle
-        || chat?.contact?.name
-        || chat?.contact?.verifiedName
-        || chat?.contact?.pushname
-        || '';
-    const resolvedNameText = String(resolvedName).trim();
-    const resolvedNameDigits = resolvedNameText.replace(/\D/g, '');
-    const isDifferentNumericId = /^[+\d\s()-]+$/.test(resolvedNameText)
-        && resolvedNameDigits !== phoneNumber;
-    const contactName = isDifferentNumericId
-        ? phoneNumber
-        : (resolvedNameText || phoneNumber);
+    const nameCandidates = [
+        contact?.name,
+        contact?.verifiedName,
+        contact?.pushname,
+        loadedName,
+        chat?.name,
+        chat?.formattedTitle,
+        chat?.contact?.name,
+        chat?.contact?.verifiedName,
+        chat?.contact?.pushname
+    ];
+    const resolvedNameText = nameCandidates
+        .map(value => String(value || '').trim())
+        .find(value => value && !/^[+\d\s()-]+$/.test(value));
+    const contactName = resolvedNameText || phoneNumber;
     let profilePicUrl = '';
     try { profilePicUrl = await getProfilePicUrl(whatsappId); } catch (err) {}
 
-    return { phoneNumber, whatsappId, name: contactName, contactName, profilePicUrl };
+    const makeSerializable = value => {
+        try { return JSON.parse(JSON.stringify(value)); } catch (err) { return null; }
+    };
+    const rawPayload = {
+        requestedNumber: cleanNumber,
+        resolvedId: makeSerializable(resolvedId),
+        contact: makeSerializable(contact?._data || contact),
+        chat: makeSerializable(chat?._data || chat),
+        loadedName
+    };
+
+    console.dir({ event: 'NEW_CONVERSATION_WHATSAPP_PAYLOAD', payload: rawPayload }, { depth: null });
+    return { phoneNumber, whatsappId, name: contactName, contactName, profilePicUrl, rawPayload };
 }
 
 function destroyClient() {
