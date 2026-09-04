@@ -158,6 +158,7 @@ function getWhatsAppMessageId(msg) {
     const id = msg?.id;
     if (!id) return '';
 
+    if (typeof id === 'string') return id;
     if (id._serialized) return id._serialized;
     if (id.$1) return id.$1;
 
@@ -242,16 +243,23 @@ function getChatDisplayName(chat, fallback = '') {
 }
 
 async function getQuotedContext(msg) {
-    if (!msg?.hasQuotedMsg) return {};
+    const embeddedQuoted = msg?._data?.quotedMsg || msg?.quotedMsg;
+    if (!msg?.hasQuotedMsg && !embeddedQuoted) return {};
     try {
-        const quoted = await msg.getQuotedMessage();
+        let quoted = null;
+        if (typeof msg.getQuotedMessage === 'function') {
+            try { quoted = await msg.getQuotedMessage(); } catch (err) {}
+        }
+        quoted = quoted || embeddedQuoted;
+        if (!quoted) return {};
         const quotedWhatsappMessageId = getWhatsAppMessageId(quoted);
         const savedQuoted = quotedWhatsappMessageId
             ? await Message.findOne({ whatsappMessageId: quotedWhatsappMessageId })
             : null;
-        const quotedBody = quoted.body || (quoted.hasMedia ? '[Mídia/Arquivo]' : 'Mensagem');
-        let quotedSenderName = quoted.fromMe ? 'Você' : (quoted._data?.notifyName || quoted._data?.senderObj?.pushname || 'Contato');
-        if (!quoted.fromMe) {
+        const quotedFromMe = quoted.fromMe ?? quoted.id?.fromMe ?? false;
+        const quotedBody = quoted.body || quoted.caption || (quoted.hasMedia ? '[Mídia/Arquivo]' : 'Mensagem');
+        let quotedSenderName = quotedFromMe ? 'Você' : (quoted.notifyName || quoted._data?.notifyName || quoted._data?.senderObj?.pushname || 'Contato');
+        if (!quotedFromMe && typeof quoted.getContact === 'function') {
             try {
                 const quotedContact = await quoted.getContact();
                 quotedSenderName = quotedContact?.name || quotedContact?.verifiedName || quotedContact?.pushname || quotedSenderName;
