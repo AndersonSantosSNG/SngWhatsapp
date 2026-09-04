@@ -19,11 +19,12 @@ function LinkifiedText({ text }) {
   });
 }
 
-export default function MessageBubble({ message, onImage }) {
+export default function MessageBubble({ message, isGroup, onImage }) {
   const fromMe = message.fromMe ?? message.sender === 'agent';
   const rawTime = message.timestamp || message.createdAt;
   const parsedTime = rawTime && String(rawTime).includes('T') ? new Date(rawTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : rawTime;
   const time = parsedTime || '';
   const placeholder = message.body === '[Mídia/Arquivo]';
-  return <div className={`message-row ${fromMe ? 'mine' : 'theirs'}`}><div className="message-bubble"><Media message={message} onImage={onImage} />{message.body && !(message.mediaUrl && placeholder) && <p><LinkifiedText text={message.body} /></p>}<span className="message-time">{time}{fromMe && <i className={`fa-solid ${message.ack >= 2 ? 'fa-check-double' : message.ack < 0 ? 'fa-circle-exclamation' : 'fa-check'}`} />}</span></div></div>;
+  const groupSender = message.groupSenderName || message.senderName;
+  return <div className={`message-row ${fromMe ? 'mine' : 'theirs'}`}><div className="message-bubble">{isGroup && !fromMe && groupSender && <strong className="group-sender">{groupSender}</strong>}<Media message={message} onImage={onImage} />{message.body && !(message.mediaUrl && placeholder) && <p><LinkifiedText text={message.body} /></p>}<span className="message-time">{time}{fromMe && <i className={`fa-solid ${message.ack >= 2 ? 'fa-check-double' : message.ack < 0 ? 'fa-circle-exclamation' : 'fa-check'}`} />}</span></div></div>;
 }

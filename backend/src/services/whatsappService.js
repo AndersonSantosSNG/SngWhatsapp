@@ -357,9 +357,12 @@ function initWhatsApp(io) {
             let profilePicUrl = '';
             let whatsappId = msg.from;
             let isGroupChat = msg.from.includes('@g.us');
+            let groupSenderId = '';
+            let groupSenderName = '';
 
             if (isGroupChat) {
                 identifier = msg.from;
+                groupSenderId = msg.author || msg._data?.author || '';
                 try {
                     const chat = await msg.getChat();
                     senderName = getChatDisplayName(chat, 'Grupo sem nome');
@@ -368,6 +371,18 @@ function initWhatsApp(io) {
                     } catch (err) {}
                 } catch (e) {
                     senderName = 'Grupo';
+                }
+
+                try {
+                    const participant = groupSenderId
+                        ? await client.getContactById(groupSenderId)
+                        : await msg.getContact();
+                    groupSenderName = participant?.name || participant?.verifiedName || participant?.pushname || '';
+                    groupSenderId = participant?.id?._serialized || groupSenderId;
+                } catch (err) {}
+
+                if (!groupSenderName) {
+                    groupSenderName = msg._data?.notifyName || groupSenderId.replace(/@.+$/, '') || 'Participante';
                 }
             } else {
                 let cleanPhone = '';
@@ -465,6 +480,8 @@ function initWhatsApp(io) {
                 ticketId: ticket._id,
                 phoneNumber: identifier,
                 sender: 'client',
+                groupSenderId,
+                groupSenderName,
                 body: bodyContent,
                 ...(mediaInfo || {})
             });
@@ -473,7 +490,9 @@ function initWhatsApp(io) {
                 id: savedDbMessage._id.toString(),
                 ticketId: ticket._id.toString(),
                 from: msg.from,
-                senderName: senderName || identifier,
+                senderName: isGroupChat ? groupSenderName : (senderName || identifier),
+                groupSenderId,
+                groupSenderName,
                 phoneNumber: identifier,
                 profilePicUrl: profilePicUrl || '',
                 body: bodyContent,
@@ -806,6 +825,42 @@ async function getAllChats() {
     }));
 }
 
+async function getContactPresence(contactId) {
+    if (!isClientReady || !client || !contactId) return { isOnline: false };
+
+    const cleanId = String(contactId).replace(/\D/g, '');
+    const jid = String(contactId).includes('@') ? String(contactId) : `${cleanId}@c.us`;
+
+    try {
+        const isOnline = await client.pupPage.evaluate(async id => {
+            try {
+                const wid = window.require('WAWebWidFactory').createWid(id);
+                const collections = window.require('WAWebCollections');
+                let chat = collections.Chat.get(wid) || collections.Chat.get(id);
+
+                if (!chat) {
+                    chat = await window.require('WAWebFindChatAction').findOrCreateLatestChat(wid);
+                }
+
+                try {
+                    const presenceAction = window.require('WAWebPresenceChatAction');
+                    await presenceAction.subscribePresence?.(wid);
+                } catch {}
+
+                await new Promise(resolve => setTimeout(resolve, 500));
+                const presence = chat?.presence;
+                return presence?.isOnline === true;
+            } catch {
+                return false;
+            }
+        }, jid);
+
+        return { isOnline: isOnline === true };
+    } catch {
+        return { isOnline: false };
+    }
+}
+
 function destroyClient() {
     if (client) return client.destroy();
     return Promise.resolve();
@@ -821,6 +876,7 @@ module.exports = {
     getStatus,
     destroyClient,
     getAllChats,
+    getContactPresence,
     getProfilePicture,
     getChatMetadata
 };

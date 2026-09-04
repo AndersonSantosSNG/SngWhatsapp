@@ -5,6 +5,8 @@ const MessageSchema = new mongoose.Schema({
     phoneNumber: { type: String, required: true },
     whatsappMessageId: { type: String, default: '', index: true },
     sender: { type: String, enum: ['client', 'agent'], required: true },
+    groupSenderId: { type: String, default: '' },
+    groupSenderName: { type: String, default: '' },
     body: { type: String, required: true },
     ack: { type: Number, default: 0 },
     hasMedia: { type: Boolean, default: false },

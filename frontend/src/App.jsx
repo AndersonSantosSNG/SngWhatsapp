@@ -8,15 +8,19 @@ import LoginModal from './components/LoginModal';
 import Settings from './components/Settings';
 import Dashboard from './components/Dashboard';
 import { storage } from './services/storage';
+import logo from './assets/logo.png';
 
 const socket = io({ transports: ['websocket', 'polling'], reconnectionAttempts: 5 });
 
 export default function App() {
+  const [initializing, setInitializing] = useState(true);
   const [agent, setAgent] = useState(null);
   const [tab, setTab] = useState('tickets');
   const [tickets, setTickets] = useState([]);
+  const [ticketsLoading, setTicketsLoading] = useState(true);
   const [activeTicket, setActiveTicket] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [contactOnline, setContactOnline] = useState(false);
   const [unreadByTicket, setUnreadByTicket] = useState({});
   const [unreadMarker, setUnreadMarker] = useState(null);
   const [connected, setConnected] = useState(false);
@@ -27,7 +31,14 @@ export default function App() {
 
   const setTheme = value => { setThemeState(value); storage.set('panelTheme', value); };
   const setCollapsed = value => { setCollapsedState(value); storage.set('sidebarCollapsed', value); };
-  const loadTickets = useCallback(async () => setTickets((await api('/tickets')).data), []);
+  const loadTickets = useCallback(async ({ showLoading = true } = {}) => {
+    if (showLoading) setTicketsLoading(true);
+    try {
+      setTickets((await api('/tickets')).data);
+    } finally {
+      if (showLoading) setTicketsLoading(false);
+    }
+  }, []);
   const loadWhatsAppStatus = useCallback(async () => {
     try {
       const response = await fetch('/api/qr');
@@ -52,10 +63,25 @@ export default function App() {
   };
 
   useEffect(() => {
-    api('/auth/me').then(result => setAgent(result.data)).catch(() => { storage.remove('agentAuthToken'); setAgent(null); });
-    loadTickets().catch(console.error);
-    loadWhatsAppStatus();
-  }, []);
+    let active = true;
+
+    const initialize = async () => {
+      try {
+        const result = await api('/auth/me');
+        if (!active) return;
+        setAgent(result.data);
+        await Promise.allSettled([loadTickets(), loadWhatsAppStatus()]);
+      } catch {
+        storage.remove('agentAuthToken');
+        if (active) setAgent(null);
+      } finally {
+        if (active) setInitializing(false);
+      }
+    };
+
+    initialize();
+    return () => { active = false; };
+  }, [loadTickets, loadWhatsAppStatus]);
 
   useEffect(() => {
     const onConnect = () => loadWhatsAppStatus();
@@ -64,7 +90,7 @@ export default function App() {
     const onMessage = data => {
       const message = data.message || data;
       setConnected(true);
-      loadTickets().catch(console.error);
+      loadTickets({ showLoading: false }).catch(console.error);
       if (activeTicket?._id === message.ticketId) setMessages(current => current.some(item => (item.id || item._id) === message.id) ? current : [...current, message]);
       if (agent && !message.fromMe && activeTicket?._id !== message.ticketId) {
         setUnreadByTicket(current => {
@@ -78,9 +104,34 @@ export default function App() {
     return () => { socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); socket.off('qr_code', onQr); socket.off('new_message', onMessage); socket.off('message_ack', onAck); };
   }, [activeTicket?._id, agent?._id, loadTickets, loadWhatsAppStatus]);
 
-  const login = async (corporateEmail, password) => { const result = await api('/auth/login', { method: 'POST', body: JSON.stringify({ corporateEmail, password }) }); storage.set('agentAuthToken', result.token); setAgent(result.data); };
+  useEffect(() => {
+    setContactOnline(false);
+    if (!agent || !activeTicket || activeTicket.isGroup) return undefined;
+
+    let active = true;
+    const loadPresence = async () => {
+      try {
+        const contactId = activeTicket.whatsappId || activeTicket.phoneNumber;
+        const result = await api(`/whatsapp/presence?contactId=${encodeURIComponent(contactId)}`);
+        if (active) setContactOnline(result.data?.isOnline === true);
+      } catch {
+        if (active) setContactOnline(false);
+      }
+    };
+
+    loadPresence();
+    const interval = setInterval(loadPresence, 15000);
+    return () => { active = false; clearInterval(interval); };
+  }, [agent, activeTicket?._id, activeTicket?.isGroup, activeTicket?.phoneNumber, activeTicket?.whatsappId]);
+
+  const login = async (corporateEmail, password) => { const result = await api('/auth/login', { method: 'POST', body: JSON.stringify({ corporateEmail, password }) }); storage.set('agentAuthToken', result.token); setAgent(result.data); await loadTickets(); };
   const logout = async () => { try { await api('/auth/logout', { method: 'POST' }); } catch {} storage.remove('agentAuthToken'); setUnreadByTicket({}); setUnreadMarker(null); setAgent(null); };
   const send = message => sendMessage({ number: activeTicket.phoneNumber, message });
+  const startConversation = async (number, message) => {
+    await sendMessage({ number, message });
+    await new Promise(resolve => setTimeout(resolve, 800));
+    await loadTickets();
+  };
   const sendFile = async (file, caption) => { const data = await file.arrayBuffer(); let binary = ''; new Uint8Array(data).forEach(byte => { binary += String.fromCharCode(byte); }); await sendMessage({ number: activeTicket.phoneNumber, message: caption, fileBase64: btoa(binary), mimeType: file.type, fileName: file.name }); };
   const updateTicket = async action => { const result = await api(`/tickets/${action}`, { method: 'POST', body: JSON.stringify({ ticketId: activeTicket._id, agentId: agent._id }) }); setActiveTicket(result.data); await loadTickets(); };
   const toggle = () => updateTicket(activeTicket.status === 'open' ? 'unclaim' : 'claim');
@@ -95,9 +146,13 @@ export default function App() {
     document.title = totalUnread ? `(${totalUnread}) SNG Chat` : 'SNG Chat';
   }, [totalUnread]);
 
+  if (initializing) {
+    return <div className="app-loading" role="status" aria-live="polite"><div className="loading-mark"><div className="loading-spinner" /><img src={logo} alt="SNG" /></div><span>Carregando...</span></div>;
+  }
+
   return <div className="app-shell">
     {agent && <Sidebar {...{ tab, setTab, agent, connected, collapsed, setCollapsed, logout }} />}
-    {agent && tab === 'tickets' && <main className={`conversations-layout ${activeTicket ? 'has-active-ticket' : ''}`}><TicketList {...{ tickets, activeId: activeTicket?._id, unreadByTicket, onSelect: selectTicket, reload: loadTickets, theme, setTheme }} /><ChatPanel ticket={activeTicket} messages={messages} unreadMarker={unreadMarker} onSend={send} onFile={sendFile} onToggle={toggle} onClose={close} onBack={() => { setActiveTicket(null); setMessages([]); }} onOpenImage={setViewer} /></main>}
+    {agent && tab === 'tickets' && <main className={`conversations-layout ${activeTicket ? 'has-active-ticket' : ''}`}><TicketList {...{ tickets, loading: ticketsLoading, activeId: activeTicket?._id, unreadByTicket, onSelect: selectTicket, reload: loadTickets, onNewConversation: startConversation, theme, setTheme }} /><ChatPanel ticket={activeTicket} messages={messages} unreadMarker={unreadMarker} contactOnline={contactOnline} onSend={send} onFile={sendFile} onToggle={toggle} onClose={close} onBack={() => { setActiveTicket(null); setMessages([]); }} onOpenImage={setViewer} /></main>}
     {agent && tab === 'dashboard' && <Dashboard connected={connected} qr={qr} />}
     {agent && tab === 'settings' && <Settings agent={agent} onAgentChange={setAgent} />}
     {!agent && <LoginModal onLogin={login} />}

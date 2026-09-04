@@ -180,6 +180,14 @@ router.get('/whatsapp/chats', async (req, res) => {
     }
 });
 
+router.get('/whatsapp/presence', requireAgent, async (req, res) => {
+    const contactId = String(req.query.contactId || '');
+    if (!contactId) return res.status(400).json({ success: false, error: 'Informe o contato.' });
+
+    const data = await whatsappService.getContactPresence(contactId);
+    res.json({ success: true, data });
+});
+
 // --- ROTAS DO PAINEL INTERNO ---
 
 router.get('/tickets', async (req, res) => {
