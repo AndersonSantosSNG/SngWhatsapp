@@ -73,7 +73,7 @@ button { cursor: pointer; }
 .ticket-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .ticket-meta small { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ticket-meta time { flex: none; color: #94a3b8; font-size: 10px; white-space: nowrap; }
-.badge { flex: 0 0 auto; max-width: 78px; padding: 3px 9px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border: 1px solid; border-radius: 999px; font-size: 10px; line-height: 1.2; font-style: normal; color: #fbbf24; background: rgba(245,158,11,.1); border-color: rgba(245,158,11,.3); }
+.badge { flex: 0 0 auto; max-width: 110px; padding: 3px 9px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border: 1px solid; border-radius: 999px; font-size: 10px; line-height: 1.2; font-style: normal; color: #fbbf24; background: rgba(245,158,11,.1); border-color: rgba(245,158,11,.3); }
 .badge.closed { color: #fb7185; border-color: rgba(244,63,94,.3); background: rgba(244,63,94,.1); }
 .badge.open { color: #34d399; border-color: rgba(16,185,129,.3); background: rgba(16,185,129,.1); }
 .avatar { --avatar-color: #2563eb; width: 48px; height: 48px; flex: none; position: relative; overflow: hidden; border-radius: 50%; display: grid; place-items: center; color: var(--avatar-color); background: color-mix(in srgb, var(--avatar-color) 20%, transparent); border: 1px solid color-mix(in srgb, var(--avatar-color) 40%, transparent); box-shadow: 0 2px 7px rgba(2,6,23,.16); transition: transform .18s ease, box-shadow .18s ease; }
