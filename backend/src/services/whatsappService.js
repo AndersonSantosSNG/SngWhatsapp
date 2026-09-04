@@ -241,6 +241,33 @@ function getChatDisplayName(chat, fallback = '') {
         || fallback;
 }
 
+async function getQuotedContext(msg) {
+    if (!msg?.hasQuotedMsg) return {};
+    try {
+        const quoted = await msg.getQuotedMessage();
+        const quotedWhatsappMessageId = getWhatsAppMessageId(quoted);
+        const savedQuoted = quotedWhatsappMessageId
+            ? await Message.findOne({ whatsappMessageId: quotedWhatsappMessageId })
+            : null;
+        const quotedBody = quoted.body || (quoted.hasMedia ? '[Mídia/Arquivo]' : 'Mensagem');
+        let quotedSenderName = quoted.fromMe ? 'Você' : (quoted._data?.notifyName || quoted._data?.senderObj?.pushname || 'Contato');
+        if (!quoted.fromMe) {
+            try {
+                const quotedContact = await quoted.getContact();
+                quotedSenderName = quotedContact?.name || quotedContact?.verifiedName || quotedContact?.pushname || quotedSenderName;
+            } catch (err) {}
+        }
+        return {
+            quotedMessageId: savedQuoted?._id?.toString() || '',
+            quotedWhatsappMessageId,
+            quotedBody,
+            quotedSenderName
+        };
+    } catch (err) {
+        return {};
+    }
+}
+
 async function getChatsForHistory() {
     return client.pupPage.evaluate(() => {
         let toPn = null;
@@ -713,6 +740,7 @@ function initWhatsApp(io) {
             const bodyContent = msg.body || (msg.hasMedia ? '[Mídia/Arquivo]' : '');
             const messageDate = new Date((Number(msg.timestamp) || Date.now() / 1000) * 1000);
             const mediaInfo = await saveMessageMedia(msg);
+            const quotedInfo = await getQuotedContext(msg);
 
             let ticket = await Ticket.findOne({ phoneNumber: identifier });
             if (!ticket) {
@@ -746,6 +774,7 @@ function initWhatsApp(io) {
                 groupSenderId,
                 groupSenderName,
                 body: bodyContent,
+                ...quotedInfo,
                 ...(mediaInfo || {})
             });
 
@@ -757,6 +786,7 @@ function initWhatsApp(io) {
                 groupSenderId,
                 groupSenderName,
                 phoneNumber: identifier,
+                ...quotedInfo,
                 profilePicUrl: profilePicUrl || '',
                 body: bodyContent,
                 hasMedia: Boolean(mediaInfo),
@@ -844,6 +874,7 @@ function initWhatsApp(io) {
             const bodyContent = msg.body || (msg.hasMedia ? '[Mídia/Arquivo]' : '');
             const messageDate = new Date((Number(msg.timestamp) || Date.now() / 1000) * 1000);
             const mediaInfo = await takePendingOutgoingMedia(targetChatId) || await saveMessageMedia(msg);
+            const quotedInfo = await getQuotedContext(msg);
 
             let ticket = await Ticket.findOne({ phoneNumber: identifier });
             if (!ticket) {
@@ -895,11 +926,13 @@ function initWhatsApp(io) {
                     sender: 'agent',
                     body: bodyContent,
                     ack: currentAck,
+                    ...quotedInfo,
                     ...(mediaInfo || {})
                 });
             } else {
                 savedDbMessage.whatsappMessageId = whatsappMessageId || savedDbMessage.whatsappMessageId;
                 savedDbMessage.ack = mergeMessageAck(savedDbMessage.ack, currentAck);
+                Object.assign(savedDbMessage, quotedInfo);
                 if (mediaInfo) {
                     savedDbMessage.hasMedia = true;
                     savedDbMessage.mediaPath = mediaInfo.mediaPath;
@@ -917,6 +950,7 @@ function initWhatsApp(io) {
                 from: targetChatId,
                 senderName: 'Você',
                 phoneNumber: identifier,
+                ...quotedInfo,
                 profilePicUrl: profilePicUrl || '',
                 body: bodyContent,
                 ack: savedDbMessage.ack,
@@ -950,11 +984,11 @@ function initWhatsApp(io) {
             pendingMessageAcks.set(whatsappMessageId, mergeMessageAck(previousAck, ack));
             setTimeout(() => pendingMessageAcks.delete(whatsappMessageId), 10 * 60 * 1000);
 
-            const savedMessage = await Message.findOneAndUpdate(
-                { whatsappMessageId },
-                { ack },
-                { returnDocument: 'after' }
-            );
+            const savedMessage = await Message.findOne({ whatsappMessageId });
+            if (savedMessage) {
+                savedMessage.ack = mergeMessageAck(savedMessage.ack, ack);
+                await savedMessage.save();
+            }
 
             if (savedMessage && ioInstance) {
                 pendingMessageAcks.delete(whatsappMessageId);
@@ -962,7 +996,7 @@ function initWhatsApp(io) {
                 ioInstance.emit('message_ack', {
                     messageId: savedMessage._id.toString(),
                     ticketId: savedMessage.ticketId.toString(),
-                    ack
+                    ack: savedMessage.ack
                 });
             } else {
                 console.log(`[ACK] Confirmacao ${ack} aguardando gravacao da mensagem`);
@@ -997,7 +1031,7 @@ function initWhatsApp(io) {
     client.initialize().catch(err => console.error('❌ Falha ao inicializar o client:', err));
 }
 
-async function sendMessage({ number, message, file, fileUrl, fileBase64, mimeType, fileName, agentId }) {
+async function sendMessage({ number, message, file, fileUrl, fileBase64, mimeType, fileName, agentId, replyToMessageId }) {
     if (!isClientReady || !client) {
         throw new Error('O serviço de WhatsApp não está pronto. Tente novamente em alguns instantes.');
     }
@@ -1025,6 +1059,10 @@ async function sendMessage({ number, message, file, fileUrl, fileBase64, mimeTyp
 
     return addToQueue(async () => {
         let options = {};
+        if (replyToMessageId) {
+            const quotedMessage = await Message.findById(replyToMessageId);
+            if (quotedMessage?.whatsappMessageId) options.quotedMessageId = quotedMessage.whatsappMessageId;
+        }
         let payloadToSend = messageToSend;
 
         if (file) {
@@ -1092,35 +1130,55 @@ async function getAllChats() {
     }));
 }
 
-async function getContactPresence(contactId) {
+async function getContactPresence(contactId, phoneNumber = '') {
     if (!isClientReady || !client || !contactId) return { isOnline: false };
 
-    const cleanId = String(contactId).replace(/\D/g, '');
-    const jid = String(contactId).includes('@') ? String(contactId) : `${cleanId}@c.us`;
+    const cleanPhone = String(phoneNumber || contactId).replace(/\D/g, '');
+    const ids = [
+        String(contactId),
+        cleanPhone ? `${cleanPhone}@c.us` : ''
+    ].filter(Boolean);
+    try {
+        const resolvedId = cleanPhone ? await client.getNumberId(cleanPhone) : null;
+        if (resolvedId?._serialized) ids.unshift(resolvedId._serialized);
+    } catch (err) {}
 
     try {
-        const isOnline = await client.pupPage.evaluate(async id => {
-            try {
-                const wid = window.require('WAWebWidFactory').createWid(id);
-                const collections = window.require('WAWebCollections');
-                let chat = collections.Chat.get(wid) || collections.Chat.get(id);
+        const isOnline = await client.pupPage.evaluate(async candidateIds => {
+            const widFactory = window.require('WAWebWidFactory');
+            const collections = window.require('WAWebCollections');
+            const presenceAction = window.require('WAWebPresenceChatAction');
+            const candidates = [];
 
-                if (!chat) {
-                    chat = await window.require('WAWebFindChatAction').findOrCreateLatestChat(wid);
-                }
-
+            for (const id of [...new Set(candidateIds)]) {
                 try {
-                    const presenceAction = window.require('WAWebPresenceChatAction');
-                    await presenceAction.subscribePresence?.(wid);
+                    const wid = widFactory.createWid(id);
+                    candidates.push(wid);
+                    try {
+                        const alternate = window.require('WAWebApiContact').getAlternateUserWid(wid);
+                        if (alternate) candidates.push(alternate);
+                    } catch {}
                 } catch {}
-
-                await new Promise(resolve => setTimeout(resolve, 500));
-                const presence = chat?.presence;
-                return presence?.isOnline === true;
-            } catch {
-                return false;
             }
-        }, jid);
+
+            for (const wid of candidates) {
+                try { await presenceAction.subscribePresence?.(wid); } catch {}
+            }
+            await new Promise(resolve => setTimeout(resolve, 1500));
+
+            return candidates.some(wid => {
+                const serialized = wid?._serialized || String(wid);
+                const chat = collections.Chat.get(wid) || collections.Chat.get(serialized);
+                let storedPresence = null;
+                try { storedPresence = collections.Presence?.get?.(wid) || collections.Presence?.get?.(serialized); } catch {}
+                const presence = chat?.presence || storedPresence;
+                const chatState = presence?.chatstates?.get?.(wid)
+                    || presence?.chatstates?.get?.(serialized)
+                    || presence?.chatstate;
+                const state = chatState?.type || chatState?._state || chatState?.state;
+                return presence?.isOnline === true || state === 'available' || state === 'online';
+            });
+        }, ids);
 
         return { isOnline: isOnline === true };
     } catch {

@@ -121,6 +121,11 @@ button { cursor: pointer; }
 .scroll-to-bottom { position: absolute; right: 24px; bottom: 82px; z-index: 3; width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid rgba(148,163,184,.25); border-radius: 50%; color: #e2e8f0; background: rgba(30,41,59,.94); box-shadow: 0 4px 14px rgba(2,6,23,.3); cursor: pointer; animation: fade-in .18s ease-out; transition: color .18s ease, background .18s ease, transform .18s ease; }
 .scroll-to-bottom:hover { color: white; background: #059669; transform: translateY(-2px); }
 .message-row { display: flex; margin: 5px 0; animation: slide-message .18s ease-out both; }
+.reply-message-button { align-self: center; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 50%; opacity: 0; color: #94a3b8; background: rgba(30,41,59,.92); transition: opacity .15s ease, color .15s ease; }
+.message-row:hover .reply-message-button, .reply-message-button:focus-visible { opacity: 1; }
+.message-row.mine .reply-message-button { order: 2; margin-left: 6px; }
+.message-row.theirs .reply-message-button { margin-right: 6px; }
+.reply-message-button:hover { color: #34d399; }
 .internal-event { display: flex; justify-content: center; margin: 10px 0; padding: 0 12px; }
 .internal-event > span { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 7px; padding: 6px 12px; border: 1px solid rgba(148,163,184,.18); border-radius: 999px; color: #94a3b8; background: rgba(15,23,42,.78); font-size: 11px; text-align: center; }
 .internal-event i { color: #34d399; }
@@ -129,13 +134,27 @@ button { cursor: pointer; }
 .message-bubble { position: relative; max-width: min(560px, 72%); min-width: 90px; padding: 9px 12px 20px; border-radius: 11px; background: #202c33; box-shadow: 0 1px 2px rgba(0,0,0,.2); font-size: 13px; line-height: 1.45; }
 .mine .message-bubble { background: #005c4b; }
 .message-bubble p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.quoted-message { display: grid; gap: 2px; min-width: 150px; margin: -3px -5px 7px; padding: 7px 9px; border-left: 3px solid #34d399; border-radius: 6px; color: #cbd5e1; background: rgba(2,6,23,.26); }
+.quoted-message strong { color: #34d399; font-size: 11px; }
+.quoted-message span { max-width: 380px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; }
 .group-sender { display: block; margin: 0 0 4px; color: #34d399; font-size: 12px; line-height: 1.3; overflow-wrap: anywhere; }
 .message-link { color: #60a5fa; text-decoration: underline; text-decoration-color: rgba(96,165,250,.5); text-underline-offset: 2px; overflow-wrap: anywhere; }
 .message-link:hover { color: #93c5fd; text-decoration-color: currentColor; }
 .message-time { position: absolute; right: 8px; bottom: 4px; display: flex; gap: 4px; align-items: center; color: #94a3b8; font-size: 10px; }
+.message-ack { color: #94a3b8; transition: color .18s ease; }
+.message-ack.read { color: #53bdeb; }
+.message-ack.error { color: #fb7185; }
 .message-image, .message-video { display: block; width: auto; max-width: min(460px, 100%); max-height: 520px; object-fit: contain; border-radius: 8px; cursor: pointer; }
 .file-link { color: inherit; text-decoration: none; }
 .composer { flex: none; display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: rgba(30,41,59,.97); border-top: 1px solid #334155; }
+.composer.with-reply { flex-wrap: wrap; }
+.reply-preview { order: -1; flex-basis: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-left: 3px solid #34d399; border-radius: 7px; color: #cbd5e1; background: rgba(15,23,42,.75); }
+.reply-preview > div { min-width: 0; display: grid; gap: 2px; }
+.reply-preview strong { color: #34d399; font-size: 11px; }
+.reply-preview span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; }
+.composer .reply-preview button { width: 28px; height: 28px; flex: none; color: #94a3b8; background: transparent; }
+.read-only-conversation { flex: none; min-height: 66px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 20px; border-top: 1px solid #334155; color: #94a3b8; background: rgba(30,41,59,.97); font-size: 12px; }
+.read-only-conversation i { color: #64748b; }
 .composer label, .composer button { width: 42px; height: 42px; display: grid; place-items: center; border: 0; border-radius: 50%; color: #cbd5e1; background: transparent; }
 .composer button { color: white; background: #059669; }
 .composer > input { flex: 1; min-width: 0; height: 46px; padding: 0 18px; border: 1px solid #334155; border-radius: 18px; outline: 0; color: white; background: #0f172a; box-shadow: inset 0 1px 2px rgba(2,6,23,.12); }
@@ -269,6 +288,7 @@ body[data-theme="light"] .chat-panel {
 body[data-theme="light"] .theirs .message-bubble { color: #334155; background: white; }
 body[data-theme="light"] .mine .message-bubble { color: white; background: #d9fdd3; color: #1e293b; }
 body[data-theme="light"] .message-time { color: #64748b; }
+body[data-theme="light"] .read-only-conversation { color: #64748b; background: rgba(255,255,255,.97); border-color: #cbd5e1; }
 body[data-theme="light"] .internal-event > span { color: #475569; background: rgba(255,255,255,.9); border-color: #cbd5e1; }
 body[data-theme="light"] .unread-separator { color: #047857; }
 body[data-theme="light"] .unread-separator::before, body[data-theme="light"] .unread-separator::after { background: rgba(5,150,105,.3); }
@@ -284,6 +304,8 @@ body[data-theme="light"] .api-key-result code { color: #065f46; background: #ecf
 body[data-theme="light"] .api-client-row code { color: #047857; }
 @media (max-width: 1100px) { .sidebar:not(.collapsed) { width: 220px; min-width: 220px; } .ticket-column { width: 350px; min-width: 320px; } .chat-title-line strong { max-width: 260px; } }
 @media (max-width: 900px) {
+    input, textarea, select { font-size: 16px; }
+    .reply-message-button { opacity: 1; }
     .app-shell { padding-bottom: calc(68px + env(safe-area-inset-bottom)); }
     .sidebar, .sidebar.collapsed { position: fixed; left: 0; right: auto; bottom: 0; z-index: 50; width: 100vw !important; min-width: 100vw !important; max-width: none; height: calc(68px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); display: block; flex: none; border: 0; border-top: 1px solid #334155; }
     .sidebar > div { width: 100%; height: 100%; }

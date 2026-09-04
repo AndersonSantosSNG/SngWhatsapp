@@ -140,7 +140,7 @@ export default function App() {
     const loadPresence = async () => {
       try {
         const contactId = activeTicket.whatsappId || activeTicket.phoneNumber;
-        const result = await api(`/whatsapp/presence?contactId=${encodeURIComponent(contactId)}`);
+        const result = await api(`/whatsapp/presence?contactId=${encodeURIComponent(contactId)}&phoneNumber=${encodeURIComponent(activeTicket.phoneNumber || '')}`);
         if (active) setContactOnline(result.data?.isOnline === true);
       } catch {
         if (active) setContactOnline(false);
@@ -154,14 +154,14 @@ export default function App() {
 
   const login = async (corporateEmail, password) => { const result = await api('/auth/login', { method: 'POST', body: JSON.stringify({ corporateEmail, password }) }); storage.set('agentAuthToken', result.token); setAuthNotice(''); setAgent(result.data); await loadTickets(); };
   const logout = async () => { try { await api('/auth/logout', { method: 'POST' }); } catch {} storage.remove('agentAuthToken'); setUnreadByTicket({}); setUnreadMarker(null); setAgent(null); };
-  const send = message => sendMessage({ number: activeTicket.phoneNumber, message });
+  const send = (message, replyToMessageId) => sendMessage({ number: activeTicket.phoneNumber, message, replyToMessageId });
   const startConversation = async number => {
     const result = await api('/tickets/start', { method: 'POST', body: JSON.stringify({ phoneNumber: number }) });
     console.log('[NOVA CONVERSA][PAYLOAD WHATSAPP]', result.whatsappPayload);
     await loadTickets({ showLoading: false });
     await selectTicket({ ...result.data, contactName: result.data.contactName || result.data.name });
   };
-  const sendFile = async (file, caption) => { const data = await file.arrayBuffer(); let binary = ''; new Uint8Array(data).forEach(byte => { binary += String.fromCharCode(byte); }); await sendMessage({ number: activeTicket.phoneNumber, message: caption, fileBase64: btoa(binary), mimeType: file.type, fileName: file.name }); };
+  const sendFile = async (file, caption, replyToMessageId) => { const data = await file.arrayBuffer(); let binary = ''; new Uint8Array(data).forEach(byte => { binary += String.fromCharCode(byte); }); await sendMessage({ number: activeTicket.phoneNumber, message: caption, replyToMessageId, fileBase64: btoa(binary), mimeType: file.type, fileName: file.name }); };
   const updateTicket = async action => { const result = await api(`/tickets/${action}`, { method: 'POST', body: JSON.stringify({ ticketId: activeTicket._id }) }); setActiveTicket(result.data); await loadTickets(); };
   const toggle = () => updateTicket(activeTicket.status === 'open' ? 'unclaim' : 'claim');
   const close = async () => { await updateTicket('close'); setActiveTicket(null); setMessages([]); };
