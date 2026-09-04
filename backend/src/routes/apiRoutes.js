@@ -12,6 +12,8 @@ const Message = require('../models/Message');
 const path = require('path');
 const crypto = require('crypto');
 const Agent = require('../models/Agent');
+const ApiClient = require('../models/ApiClient');
+const { hashApiKey } = require('../middlewares/auth');
 
 const agentSessions = new Map();
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
@@ -156,6 +158,54 @@ router.patch('/agents/:agentId/status', requireAgent, requireAdmin, async (req, 
 });
 
 // --- ROTA DE ENVIO EXTERNO (MANTÉM CHAVE DE API) ---
+function normalizeOrigin(value) {
+    const url = new URL(String(value || '').trim());
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('URL inválida.');
+    return url.origin;
+}
+
+function publicApiClient(client) {
+    return { _id: client._id, name: client.name, allowedOrigin: client.allowedOrigin, keyPrefix: client.keyPrefix, active: client.active, createdAt: client.createdAt, lastUsedAt: client.lastUsedAt };
+}
+
+router.get('/api-clients', requireAgent, requireAdmin, async (req, res) => {
+    const clients = await ApiClient.find({}).sort({ active: -1, name: 1 });
+    res.json({ success: true, data: clients.map(publicApiClient) });
+});
+
+router.post('/api-clients', requireAgent, requireAdmin, async (req, res) => {
+    try {
+        const name = String(req.body.name || '').trim();
+        if (!name) return res.status(400).json({ success: false, error: 'Informe o nome do site.' });
+        const allowedOrigin = normalizeOrigin(req.body.url);
+        const apiKey = `sng_${crypto.randomBytes(32).toString('hex')}`;
+        const client = await ApiClient.create({ name, allowedOrigin, keyHash: hashApiKey(apiKey), keyPrefix: `${apiKey.slice(0, 12)}...`, createdBy: req.agent._id });
+        res.status(201).json({ success: true, data: publicApiClient(client), apiKey });
+    } catch (err) {
+        res.status(400).json({ success: false, error: err.message || 'Não foi possível criar a integração.' });
+    }
+});
+
+router.patch('/api-clients/:clientId/status', requireAgent, requireAdmin, async (req, res) => {
+    if (typeof req.body.active !== 'boolean') return res.status(400).json({ success: false, error: 'Status inválido.' });
+    const client = await ApiClient.findByIdAndUpdate(req.params.clientId, { active: req.body.active }, { returnDocument: 'after' });
+    if (!client) return res.status(404).json({ success: false, error: 'Integração não encontrada.' });
+    res.json({ success: true, data: publicApiClient(client) });
+});
+
+router.post('/api-clients/:clientId/rotate', requireAgent, requireAdmin, async (req, res) => {
+    const apiKey = `sng_${crypto.randomBytes(32).toString('hex')}`;
+    const client = await ApiClient.findByIdAndUpdate(req.params.clientId, { keyHash: hashApiKey(apiKey), keyPrefix: `${apiKey.slice(0, 12)}...`, active: true }, { returnDocument: 'after' });
+    if (!client) return res.status(404).json({ success: false, error: 'Integração não encontrada.' });
+    res.json({ success: true, data: publicApiClient(client), apiKey });
+});
+
+router.delete('/api-clients/:clientId', requireAgent, requireAdmin, async (req, res) => {
+    const client = await ApiClient.findByIdAndDelete(req.params.clientId);
+    if (!client) return res.status(404).json({ success: false, error: 'Integração não encontrada.' });
+    res.json({ success: true, message: 'Integração e chave excluídas permanentemente.' });
+});
+
 router.post('/send-message', checkApiKey, upload.single('file'), messageController.handleSendMessage);
 
 // O painel usa a sessao autenticada; o agentId vem sempre do servidor.
@@ -188,7 +238,7 @@ router.get('/whatsapp/presence', requireAgent, async (req, res) => {
     res.json({ success: true, data });
 });
 
-router.post('/whatsapp/sync-history', requireAgent, async (req, res) => {
+router.post('/whatsapp/sync-history', requireAgent, requireAdmin, async (req, res) => {
     try {
         const data = await whatsappService.syncRecentMessages();
         res.json({ success: true, data });
@@ -204,6 +254,24 @@ router.get('/tickets', async (req, res) => {
         const { status } = req.query; 
         const filter = status ? { status } : {};
         const tickets = await Ticket.find(filter).sort({ updatedAt: -1 });
+
+        const missingTimestampTickets = tickets.filter(ticket => !ticket.lastMessageAt);
+        if (missingTimestampTickets.length) {
+            const latestMessages = await Message.aggregate([
+                { $match: { ticketId: { $in: missingTimestampTickets.map(ticket => ticket._id) }, isInternalEvent: { $ne: true } } },
+                { $sort: { timestamp: -1 } },
+                { $group: { _id: '$ticketId', lastMessageAt: { $first: '$timestamp' } } }
+            ]);
+            const timestamps = new Map(latestMessages.map(item => [item._id.toString(), item.lastMessageAt]));
+            const updates = [];
+            for (const ticket of missingTimestampTickets) {
+                const lastMessageAt = timestamps.get(ticket._id.toString());
+                if (!lastMessageAt) continue;
+                ticket.lastMessageAt = lastMessageAt;
+                updates.push({ updateOne: { filter: { _id: ticket._id }, update: { $set: { lastMessageAt } } } });
+            }
+            if (updates.length) await Ticket.bulkWrite(updates);
+        }
 
         const genericGroupNames = new Set(['', 'Grupo', 'Grupo sem nome', 'Grupo do WhatsApp']);
         await Promise.all(tickets.map(async (ticket) => {
@@ -344,7 +412,7 @@ router.post('/tickets/unclaim', requireAgent, async (req, res) => {
 });
 
 // --- ROTA DE LIMPEZA DO BANCO DE DADOS ---
-router.delete('/database/clear', async (req, res) => {
+router.delete('/database/clear', requireAgent, requireAdmin, async (req, res) => {
     try {
         await Ticket.deleteMany({});
         await Message.deleteMany({});

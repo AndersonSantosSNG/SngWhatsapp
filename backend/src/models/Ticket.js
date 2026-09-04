@@ -8,6 +8,7 @@ const TicketSchema = new mongoose.Schema({
     status: { type: String, enum: ['pending', 'open', 'closed'], default: 'pending' },
     assignedAgent: { type: String, default: null }, // <-- Aqui está como assignedAgent
     lastMessage: { type: String, default: '' },
+    lastMessageAt: { type: Date, default: null },
     updatedAt: { type: Date, default: Date.now },
     profilePicUrl: { type: String, default: '' }
 });

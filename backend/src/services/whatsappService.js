@@ -382,10 +382,12 @@ async function syncRecentMessages() {
                         isGroup,
                         status: 'pending',
                         lastMessage: latestBody,
+                        lastMessageAt: latestDate,
                         updatedAt: latestDate
                     });
-                } else if (!ticket.lastMessage || latestDate > new Date(ticket.updatedAt || 0)) {
+                } else if (!ticket.lastMessageAt || latestDate > new Date(ticket.lastMessageAt)) {
                     ticket.lastMessage = latestBody;
+                    ticket.lastMessageAt = latestDate;
                     ticket.updatedAt = latestDate;
                     ticket.whatsappId = ticket.whatsappId || chatId;
                     await ticket.save();
@@ -709,6 +711,7 @@ function initWhatsApp(io) {
             }
 
             const bodyContent = msg.body || (msg.hasMedia ? '[Mídia/Arquivo]' : '');
+            const messageDate = new Date((Number(msg.timestamp) || Date.now() / 1000) * 1000);
             const mediaInfo = await saveMessageMedia(msg);
 
             let ticket = await Ticket.findOne({ phoneNumber: identifier });
@@ -720,10 +723,12 @@ function initWhatsApp(io) {
                     profilePicUrl: profilePicUrl || '',
                     isGroup: isGroupChat,
                     status: 'pending',
-                    lastMessage: bodyContent
+                    lastMessage: bodyContent,
+                    lastMessageAt: messageDate
                 });
             } else {
                 ticket.lastMessage = bodyContent;
+                ticket.lastMessageAt = messageDate;
                 ticket.whatsappId = whatsappId || ticket.whatsappId;
                 if (senderName) ticket.contactName = senderName;
                 if (profilePicUrl) ticket.profilePicUrl = profilePicUrl;
@@ -836,6 +841,7 @@ function initWhatsApp(io) {
             if (!identifier) return;
 
             const bodyContent = msg.body || (msg.hasMedia ? '[Mídia/Arquivo]' : '');
+            const messageDate = new Date((Number(msg.timestamp) || Date.now() / 1000) * 1000);
             const mediaInfo = await takePendingOutgoingMedia(targetChatId) || await saveMessageMedia(msg);
 
             let ticket = await Ticket.findOne({ phoneNumber: identifier });
@@ -847,10 +853,12 @@ function initWhatsApp(io) {
                     profilePicUrl: profilePicUrl || '',
                     isGroup: isGroupChat,
                     status: 'open',
-                    lastMessage: bodyContent
+                    lastMessage: bodyContent,
+                    lastMessageAt: messageDate
                 });
             } else {
                 ticket.lastMessage = bodyContent;
+                ticket.lastMessageAt = messageDate;
                 ticket.whatsappId = whatsappId || ticket.whatsappId;
                 if (chatName && chatName !== identifier) {
                     ticket.contactName = chatName;

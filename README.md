@@ -274,3 +274,20 @@ Depois use `Ctrl + F5` no navegador.
 - O painel usa a sessão autenticada do agente; a chave da API é reservada às integrações externas.
 - Use HTTPS e um proxy reverso quando publicar o sistema na internet.
 - Restrinja o acesso às portas `27017`, `3000` e `5173` conforme o ambiente.
+
+### Chaves da API por site
+
+Administradores podem criar credenciais em **Configurações > Nova integração**. Informe um nome e a origem do site, por exemplo `https://loja.exemplo.com.br`. A chave completa é exibida somente no momento da criação ou rotação e deve ser enviada no cabeçalho `X-API-Key`:
+
+```http
+POST /api/send-message
+Content-Type: application/json
+X-API-Key: sng_CHAVE_GERADA
+
+{
+  "number": "5511999999999",
+  "message": "Olá!"
+}
+```
+
+Chamadas feitas por navegador têm o cabeçalho `Origin` validado contra a URL cadastrada. Chamadas servidor-a-servidor são autenticadas pela chave. A variável antiga `API_SECRET_KEY` continua aceita para permitir migração gradual.

@@ -1,6 +1,30 @@
 import { useState } from 'react';
 import Avatar from './Avatar';
 
+function formatLastMessageTime(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const now = new Date();
+  const elapsed = Math.max(0, now.getTime() - date.getTime());
+  const minutes = Math.floor(elapsed / 60000);
+  const hours = Math.floor(elapsed / 3600000);
+  const time = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startMessageDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const calendarDays = Math.round((startToday - startMessageDay) / 86400000);
+
+  if (calendarDays === 0) {
+    const relative = minutes < 1 ? 'agora' : hours < 1 ? `há ${minutes} ${minutes === 1 ? 'minuto' : 'minutos'}` : `há ${hours} ${hours === 1 ? 'hora' : 'horas'}`;
+    return `${time} (${relative})`;
+  }
+  if (calendarDays === 1) return `Ontem às ${time} (há ${Math.max(1, hours)} horas)`;
+
+  const dateText = date.toLocaleDateString('pt-BR');
+  return `${dateText} às ${time} (há ${calendarDays} dias)`;
+}
+
 export default function TicketList({ tickets, loading, activeId, unreadByTicket, onSelect, reload, onNewConversation, theme, setTheme }) {
   const [search, setSearch] = useState('');
   const [showNewConversation, setShowNewConversation] = useState(false);
@@ -46,8 +70,9 @@ export default function TicketList({ tickets, loading, activeId, unreadByTicket,
         const generic = ['', 'Grupo', 'Grupo sem nome', 'Grupo do WhatsApp'];
         const name = ticket.isGroup ? (generic.includes((ticket.contactName || '').trim()) ? 'Grupo do WhatsApp' : ticket.contactName) : (ticket.contactName || ticket.phoneNumber);
         const unreadCount = unreadByTicket[ticket._id]?.count || 0;
+        const lastMessageTime = formatLastMessageTime(ticket.lastMessageAt);
         return <button type="button" key={ticket._id} className={`ticket-item ${activeId === ticket._id ? 'selected' : ''} ${unreadCount ? 'unread' : ''}`} onClick={() => onSelect(ticket)}>
-          <Avatar ticket={ticket} /><span className="ticket-content"><span className="ticket-top"><strong>{name}</strong>{unreadCount > 0 && <span className="unread-count" aria-label={`${unreadCount} mensagens novas`}>{unreadCount > 99 ? '99+' : unreadCount}</span>}<em className={`badge ${ticket.status}`}>{ticket.status === 'closed' ? 'Encerrado' : ticket.status === 'open' ? 'Aberto' : 'Pendente'}</em></span><small>{ticket.isGroup ? 'Grupo' : ticket.phoneNumber}</small><span className="last-message">{ticket.lastMessage === '[Mídia/Arquivo]' ? '📎 Mídia' : ticket.lastMessage || 'Sem mensagens'}</span></span>
+          <Avatar ticket={ticket} /><span className="ticket-content"><span className="ticket-top"><strong>{name}</strong>{unreadCount > 0 && <span className="unread-count" aria-label={`${unreadCount} mensagens novas`}>{unreadCount > 99 ? '99+' : unreadCount}</span>}<em className={`badge ${ticket.status}`}>{ticket.status === 'closed' ? 'Encerrado' : ticket.status === 'open' ? 'Aberto' : 'Pendente'}</em></span><span className="ticket-meta"><small>{ticket.isGroup ? 'Grupo' : ticket.phoneNumber}</small>{lastMessageTime && <time dateTime={ticket.lastMessageAt}>{lastMessageTime}</time>}</span><span className="last-message">{ticket.lastMessage === '[Mídia/Arquivo]' ? '📎 Mídia' : ticket.lastMessage || 'Sem mensagens'}</span></span>
         </button>;
       })}
     </div>
