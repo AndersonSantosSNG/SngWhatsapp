@@ -1126,6 +1126,27 @@ async function getContactPresence(contactId) {
     }
 }
 
+async function getContactMetadata(number) {
+    if (!isClientReady || !client) {
+        throw new Error('O servico de WhatsApp nao esta pronto.');
+    }
+
+    const cleanNumber = String(number || '').replace(/\D/g, '');
+    const resolvedId = await client.getNumberId(cleanNumber);
+    if (!resolvedId?._serialized) {
+        throw new Error('Este numero nao foi encontrado no WhatsApp.');
+    }
+
+    const whatsappId = resolvedId._serialized;
+    const contact = await client.getContactById(whatsappId);
+    const phoneNumber = String(contact?.number || resolvedId.user || cleanNumber).replace(/\D/g, '');
+    const contactName = contact?.name || contact?.verifiedName || contact?.pushname || phoneNumber;
+    let profilePicUrl = '';
+    try { profilePicUrl = await getProfilePicUrl(whatsappId); } catch (err) {}
+
+    return { phoneNumber, whatsappId, contactName, profilePicUrl };
+}
+
 function destroyClient() {
     if (client) return client.destroy();
     return Promise.resolve();
@@ -1178,6 +1199,7 @@ module.exports = {
     getAllChats,
     syncRecentMessages,
     getContactPresence,
+    getContactMetadata,
     recordTicketEvent,
     getProfilePicture,
     getChatMetadata

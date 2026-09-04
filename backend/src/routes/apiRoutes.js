@@ -313,6 +313,40 @@ router.get('/tickets/:ticketId/messages', async (req, res) => {
     }
 });
 
+router.post('/tickets/start', requireAgent, async (req, res) => {
+    try {
+        const phoneNumber = String(req.body?.phoneNumber || '').replace(/\D/g, '');
+        if (phoneNumber.length < 10 || phoneNumber.length > 15) {
+            return res.status(400).json({ success: false, error: 'Informe o numero com DDD e codigo do pais.' });
+        }
+
+        const contact = await whatsappService.getContactMetadata(phoneNumber);
+        const ticket = await Ticket.findOneAndUpdate(
+            { $or: [{ phoneNumber: contact.phoneNumber }, { whatsappId: contact.whatsappId }] },
+            {
+                $setOnInsert: {
+                    isGroup: false,
+                    status: 'pending',
+                    lastMessage: '',
+                    lastMessageAt: null
+                },
+                $set: {
+                    phoneNumber: contact.phoneNumber,
+                    whatsappId: contact.whatsappId,
+                    contactName: contact.contactName,
+                    ...(contact.profilePicUrl ? { profilePicUrl: contact.profilePicUrl } : {}),
+                    updatedAt: new Date()
+                }
+            },
+            { upsert: true, returnDocument: 'after' }
+        );
+
+        res.json({ success: true, data: ticket });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 router.get('/messages/:messageId/media', async (req, res) => {
     try {
         const message = await Message.findById(req.params.messageId);

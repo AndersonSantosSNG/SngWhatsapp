@@ -131,10 +131,10 @@ export default function App() {
   const login = async (corporateEmail, password) => { const result = await api('/auth/login', { method: 'POST', body: JSON.stringify({ corporateEmail, password }) }); storage.set('agentAuthToken', result.token); setAgent(result.data); await loadTickets(); };
   const logout = async () => { try { await api('/auth/logout', { method: 'POST' }); } catch {} storage.remove('agentAuthToken'); setUnreadByTicket({}); setUnreadMarker(null); setAgent(null); };
   const send = message => sendMessage({ number: activeTicket.phoneNumber, message });
-  const startConversation = async (number, message) => {
-    await sendMessage({ number, message });
-    await new Promise(resolve => setTimeout(resolve, 800));
-    await loadTickets();
+  const startConversation = async number => {
+    const result = await api('/tickets/start', { method: 'POST', body: JSON.stringify({ phoneNumber: number }) });
+    await loadTickets({ showLoading: false });
+    await selectTicket(result.data);
   };
   const sendFile = async (file, caption) => { const data = await file.arrayBuffer(); let binary = ''; new Uint8Array(data).forEach(byte => { binary += String.fromCharCode(byte); }); await sendMessage({ number: activeTicket.phoneNumber, message: caption, fileBase64: btoa(binary), mimeType: file.type, fileName: file.name }); };
   const updateTicket = async action => { const result = await api(`/tickets/${action}`, { method: 'POST', body: JSON.stringify({ ticketId: activeTicket._id }) }); setActiveTicket(result.data); await loadTickets(); };

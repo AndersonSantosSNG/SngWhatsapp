@@ -42,15 +42,14 @@ export default function TicketList({ tickets, loading, activeId, unreadByTicket,
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const number = String(form.get('number') || '').replace(/\D/g, '');
-    const message = String(form.get('message') || '').trim();
     if (number.length < 10 || number.length > 15) return setSendError('Informe o número com DDD e código do país.');
     setSending(true);
     setSendError('');
     try {
-      await onNewConversation(number, message);
+      await onNewConversation(number);
       setShowNewConversation(false);
     } catch (err) {
-      setSendError(err.message || 'Não foi possível enviar a mensagem.');
+      setSendError(err.message || 'Não foi possível abrir a conversa.');
     } finally {
       setSending(false);
     }
@@ -76,6 +75,6 @@ export default function TicketList({ tickets, loading, activeId, unreadByTicket,
         </button>;
       })}
     </div>
-    {showNewConversation && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !sending) setShowNewConversation(false); }}><form className="card new-conversation-card" onSubmit={submitNewConversation}><div className="new-conversation-title"><i className="fa-solid fa-comment-medical" /><div><h2>Nova conversa</h2><p>Envie uma mensagem para um número que ainda não está na lista.</p></div></div><label>Número do WhatsApp<input name="number" type="tel" inputMode="tel" placeholder="Ex.: 5511999999999" required autoFocus /></label><label>Mensagem<textarea name="message" rows="4" placeholder="Digite a primeira mensagem" required /></label>{sendError && <p className="form-error">{sendError}</p>}<div className="new-conversation-actions"><button type="button" onClick={() => setShowNewConversation(false)} disabled={sending}>Cancelar</button><button type="submit" className="submit-button" disabled={sending}>{sending ? 'Enviando...' : 'Enviar mensagem'}</button></div></form></div>}
+    {showNewConversation && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !sending) setShowNewConversation(false); }}><form className="card new-conversation-card" onSubmit={submitNewConversation}><div className="new-conversation-title"><i className="fa-solid fa-comment-medical" /><div><h2>Nova conversa</h2><p>Informe o número para abrir a conversa sem enviar uma mensagem.</p></div></div><label>Número do WhatsApp<input name="number" type="tel" inputMode="tel" placeholder="Ex.: 5511999999999" required autoFocus /></label>{sendError && <p className="form-error">{sendError}</p>}<div className="new-conversation-actions"><button type="button" onClick={() => setShowNewConversation(false)} disabled={sending}>Cancelar</button><button type="submit" className="submit-button" disabled={sending}>{sending ? 'Abrindo...' : 'Abrir conversa'}</button></div></form></div>}
   </section>;
 }
