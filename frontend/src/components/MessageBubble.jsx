@@ -20,6 +20,11 @@ function LinkifiedText({ text }) {
 }
 
 export default function MessageBubble({ message, isGroup, onImage }) {
+  if (message.isInternalEvent) {
+    const eventDate = new Date(message.timestamp || message.createdAt || Date.now()).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    const icons = { claimed: 'fa-user-check', unclaimed: 'fa-arrow-rotate-left', closed: 'fa-circle-check' };
+    return <div className="internal-event"><span><i className={`fa-solid ${icons[message.internalAction] || 'fa-circle-info'}`} />{message.body}<time>{eventDate}</time></span></div>;
+  }
   const fromMe = message.fromMe ?? message.sender === 'agent';
   const rawTime = message.timestamp || message.createdAt;
   const parsedTime = rawTime && String(rawTime).includes('T') ? new Date(rawTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : rawTime;

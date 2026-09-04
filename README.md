@@ -91,6 +91,11 @@ Adicione:
 API_SECRET_KEY=COLOQUE_UMA_CHAVE_ALEATORIA_AQUI
 MONGODB_URI=mongodb://localhost:27017/sng_whatsapp
 PORT=3000
+# Quantidade de dias e limite de mensagens por conversa importadas do WhatsApp.
+HISTORY_SYNC_DAYS=30
+HISTORY_SYNC_LIMIT=1000
+# Use false para importar apenas textos e ignorar arquivos antigos.
+HISTORY_SYNC_MEDIA=true
 ```
 
 Para gerar uma chave segura no PowerShell:

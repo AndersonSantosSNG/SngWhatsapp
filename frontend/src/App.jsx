@@ -100,8 +100,12 @@ export default function App() {
       }
     };
     const onAck = ({ messageId, ack }) => setMessages(current => current.map(message => (message.id || message._id) === messageId ? { ...message, ack } : message));
-    socket.on('connect', onConnect); socket.on('disconnect', onDisconnect); socket.on('qr_code', onQr); socket.on('new_message', onMessage); socket.on('message_ack', onAck);
-    return () => { socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); socket.off('qr_code', onQr); socket.off('new_message', onMessage); socket.off('message_ack', onAck); };
+    const onTicketEvent = event => {
+      if (activeTicket?._id === event.ticketId) setMessages(current => current.some(item => (item.id || item._id) === event.id) ? current : [...current, event]);
+    };
+    const onHistorySyncComplete = () => loadTickets().catch(console.error);
+    socket.on('connect', onConnect); socket.on('disconnect', onDisconnect); socket.on('qr_code', onQr); socket.on('new_message', onMessage); socket.on('message_ack', onAck); socket.on('ticket_event', onTicketEvent); socket.on('history_sync_complete', onHistorySyncComplete);
+    return () => { socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); socket.off('qr_code', onQr); socket.off('new_message', onMessage); socket.off('message_ack', onAck); socket.off('ticket_event', onTicketEvent); socket.off('history_sync_complete', onHistorySyncComplete); };
   }, [activeTicket?._id, agent?._id, loadTickets, loadWhatsAppStatus]);
 
   useEffect(() => {
@@ -133,7 +137,7 @@ export default function App() {
     await loadTickets();
   };
   const sendFile = async (file, caption) => { const data = await file.arrayBuffer(); let binary = ''; new Uint8Array(data).forEach(byte => { binary += String.fromCharCode(byte); }); await sendMessage({ number: activeTicket.phoneNumber, message: caption, fileBase64: btoa(binary), mimeType: file.type, fileName: file.name }); };
-  const updateTicket = async action => { const result = await api(`/tickets/${action}`, { method: 'POST', body: JSON.stringify({ ticketId: activeTicket._id, agentId: agent._id }) }); setActiveTicket(result.data); await loadTickets(); };
+  const updateTicket = async action => { const result = await api(`/tickets/${action}`, { method: 'POST', body: JSON.stringify({ ticketId: activeTicket._id }) }); setActiveTicket(result.data); await loadTickets(); };
   const toggle = () => updateTicket(activeTicket.status === 'open' ? 'unclaim' : 'claim');
   const close = async () => { await updateTicket('close'); setActiveTicket(null); setMessages([]); };
 

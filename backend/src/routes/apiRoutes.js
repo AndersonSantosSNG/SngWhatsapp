@@ -141,7 +141,7 @@ router.patch('/agents/:agentId/status', requireAgent, requireAdmin, async (req, 
             return res.status(400).json({ success: false, error: 'Voce nao pode bloquear sua propria conta.' });
         }
 
-        const agent = await Agent.findByIdAndUpdate(req.params.agentId, { active }, { new: true });
+        const agent = await Agent.findByIdAndUpdate(req.params.agentId, { active }, { returnDocument: 'after' });
         if (!agent) return res.status(404).json({ success: false, error: 'Agente nao encontrado.' });
 
         if (!active) {
@@ -186,6 +186,15 @@ router.get('/whatsapp/presence', requireAgent, async (req, res) => {
 
     const data = await whatsappService.getContactPresence(contactId);
     res.json({ success: true, data });
+});
+
+router.post('/whatsapp/sync-history', requireAgent, async (req, res) => {
+    try {
+        const data = await whatsappService.syncRecentMessages();
+        res.json({ success: true, data });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
 });
 
 // --- ROTAS DO PAINEL INTERNO ---
@@ -275,41 +284,44 @@ router.get('/tickets/:ticketId/profile-picture', async (req, res) => {
     }
 });
 
-router.post('/tickets/claim', async (req, res) => {
+router.post('/tickets/claim', requireAgent, async (req, res) => {
     try {
-        const { ticketId, agentId } = req.body;
+        const { ticketId } = req.body;
         const ticket = await Ticket.findByIdAndUpdate(
             ticketId,
-            { assignedTo: agentId, status: 'open' }, // <-- Atualiza assignedTo
-            { new: true }
+            { assignedAgent: req.agent._id.toString(), status: 'open', updatedAt: new Date() },
+            { returnDocument: 'after' }
         );
 
         if (!ticket) {
             return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
         }
 
+        await whatsappService.recordTicketEvent(ticket, req.agent, 'claimed');
         res.json({ success: true, message: 'Atendimento assumido!', data: ticket });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-router.post('/tickets/close', async (req, res) => {
+router.post('/tickets/close', requireAgent, async (req, res) => {
     try {
         const { ticketId } = req.body;
         const ticket = await Ticket.findByIdAndUpdate(
             ticketId,
-            { status: 'closed' },
-            { new: true }
+            { status: 'closed', updatedAt: new Date() },
+            { returnDocument: 'after' }
         );
 
+        if (!ticket) return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
+        await whatsappService.recordTicketEvent(ticket, req.agent, 'closed');
         res.json({ success: true, message: 'Atendimento encerrado!', data: ticket });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-router.post('/tickets/unclaim', async (req, res) => {
+router.post('/tickets/unclaim', requireAgent, async (req, res) => {
     try {
         const { ticketId } = req.body;
         const ticket = await Ticket.findById(ticketId);
@@ -318,8 +330,11 @@ router.post('/tickets/unclaim', async (req, res) => {
         }
 
         ticket.status = 'pending';
-        ticket.assignedTo = null;
+        ticket.assignedAgent = null;
+        ticket.updatedAt = new Date();
         await ticket.save();
+
+        await whatsappService.recordTicketEvent(ticket, req.agent, 'unclaimed');
 
         return res.status(200).json({ success: true, data: ticket });
     } catch (err) {
