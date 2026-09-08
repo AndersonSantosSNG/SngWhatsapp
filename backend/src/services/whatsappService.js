@@ -8,7 +8,7 @@ const config = require('../config/whatsapp');
 const { addToQueue } = require('./queueService');
 const { convertVoiceAudio } = require('./audioService');
 const { sendAudio } = require('./audioSendService');
-const { displayMessageText } = require('./messageContent');
+const { displayMessageText, hydrateStoredMentions } = require('./messageContent');
 
 const Ticket = require('../models/Ticket');
 const Message = require('../models/Message');
@@ -405,7 +405,7 @@ async function syncRecentMessages() {
             try {
                 const isGroup = Boolean(chat.isGroup || chatId.includes('@g.us'));
                 const identifier = isGroup ? chatId : (chat.phoneNumber || chat.id?.user || chatId.replace(/@.+$/, '')).replace(/\D/g, '');
-                if (!identifier) continue;
+                if (!identifier || (!isGroup && getChatDisplayName(chat, '').trim().toLowerCase() === 'whatsapp business')) continue;
 
                 const recent = await fetchMessagesForHistory(chatId, cutoff);
                 if (!recent.length) continue;
@@ -530,6 +530,34 @@ async function syncRecentMessages() {
     })().finally(() => { historySyncPromise = null; });
 
     return historySyncPromise;
+}
+
+async function getGroupMembers(chatId) {
+    if (!isClientReady || !client) throw new Error('O serviço de WhatsApp não está pronto.');
+    if (!chatId?.endsWith('@g.us')) throw new Error('Esta conversa não é um grupo.');
+    return client.pupPage.evaluate(async id => {
+        const serialize = value => typeof value === 'string' ? value : value?._serialized || value?.$1 || '';
+        const wid = window.require('WAWebWidFactory').createWid(id);
+        await window.require('WAWebGroupQueryJob').queryAndUpdateGroupMetadataById({ id });
+        const collections = window.require('WAWebCollections');
+        const chat = collections.Chat.get(wid);
+        const metadata = chat?.groupMetadata || collections.GroupMetadata?.get(wid);
+        const participants = metadata?.participants?.getModelsArray?.();
+        if (!participants) throw new Error('Não foi possível carregar os membros do grupo.');
+        return participants.map(participant => {
+            const memberId = serialize(participant.id);
+            let alternate;
+            try { alternate = window.require('WAWebApiContact').getAlternateUserWid(participant.id); } catch {}
+            const contact = collections.Contact.get(participant.id) || collections.Contact.get(alternate);
+            const phoneId = [memberId, serialize(alternate)].find(value => value.endsWith('@c.us')) || '';
+            return {
+                id: memberId,
+                name: contact?.name || contact?.verifiedName || contact?.pushname || '',
+                phoneNumber: phoneId.split('@')[0],
+                isAdmin: Boolean(participant.isAdmin || participant.isSuperAdmin)
+            };
+        });
+    }, chatId);
 }
 
 async function getChatMetadata(chatId) {
@@ -689,6 +717,7 @@ function initWhatsApp(io) {
                 let cleanPhone = '';
                 try {
                     const contact = await msg.getContact();
+                    if ([contact.name, contact.verifiedName, contact.pushname].some(name => String(name || '').trim().toLowerCase() === 'whatsapp business')) return;
                     whatsappId = contact.id?._serialized || msg.from;
                     
                     let timerFoto;
@@ -753,6 +782,7 @@ function initWhatsApp(io) {
                 } catch (err) {}
             }
 
+            if (!isGroupChat && senderName?.trim().toLowerCase() === 'whatsapp business') return;
             const bodyContent = await displayMessageText(msg, client);
             const messageDate = new Date((Number(msg.timestamp) || Date.now() / 1000) * 1000);
             const mediaInfo = await saveMessageMedia(msg);
@@ -1341,6 +1371,8 @@ async function recordTicketEvent(ticket, agent, action) {
 }
 
 module.exports = {
+    getGroupMembers,
+    resolveStoredMentions: messages => hydrateStoredMentions(messages, isClientReady ? client : null),
     initWhatsApp,
     sendMessage,
     getStatus,

@@ -343,6 +343,18 @@ router.get('/tickets', requireAgent, async (req, res) => {
     }
 });
 
+router.get('/tickets/:ticketId/members', requireAgent, async (req, res) => {
+    try {
+        const ticket = await Ticket.findById(req.params.ticketId);
+        if (!ticket) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
+        if (!ticket.isGroup) return res.status(400).json({ success: false, error: 'Esta conversa não é um grupo.' });
+        const data = await whatsappService.getGroupMembers(ticket.whatsappId || ticket.phoneNumber);
+        res.json({ success: true, data });
+    } catch (err) {
+        res.status(503).json({ success: false, error: err.message || 'Não foi possível carregar os membros.' });
+    }
+});
+
 router.get('/tickets/:ticketId/messages', requireAgent, async (req, res) => {
     try {
         const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || '100', 10)));
@@ -353,7 +365,7 @@ router.get('/tickets/:ticketId/messages', requireAgent, async (req, res) => {
         }
         const descending = await Message.find(filter).sort({ timestamp: -1 }).limit(limit + 1);
         const hasMore = descending.length > limit;
-        const messages = descending.slice(0, limit).reverse();
+        const messages = await whatsappService.resolveStoredMentions(descending.slice(0, limit).reverse());
         res.json({ success: true, data: messages, meta: { hasMore, limit } });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
