@@ -5,6 +5,7 @@ const upload = require('../middlewares/upload');
 const qrController = require('../controllers/qrController');
 const messageController = require('../controllers/messageController');
 const whatsappService = require('../services/whatsappService');
+const glpiService = require('../services/glpiService');
 
 // Models do MongoDB
 const Ticket = require('../models/Ticket');
@@ -537,6 +538,88 @@ router.post('/tickets/unclaim', requireAgent, async (req, res) => {
     } catch (err) {
         console.error('Erro ao devolver ticket:', err);
         return res.status(500).json({ success: false, error: 'Erro interno no servidor.' });
+    }
+});
+
+router.get('/tickets/:ticketId/glpi/messages', requireAgent, async (req, res) => {
+    try {
+        const ticket = await Ticket.findById(req.params.ticketId);
+        if (!ticket) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
+        const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
+        const messages = await Message.find({
+            ticketId: ticket._id,
+            timestamp: { $gte: since },
+            isInternalEvent: { $ne: true }
+        }).sort({ timestamp: 1 }).select('_id sender body hasMedia mediaPath mediaFileName mediaMimeType timestamp groupSenderName').lean();
+        res.json({ success: true, data: messages.map(message => ({
+            _id: message._id,
+            sender: message.sender,
+            body: message.body,
+            hasMedia: message.hasMedia,
+            attachmentAvailable: Boolean(message.hasMedia && message.mediaPath),
+            mediaFileName: message.mediaFileName,
+            mediaMimeType: message.mediaMimeType,
+            timestamp: message.timestamp,
+            groupSenderName: message.groupSenderName
+        })) });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Não foi possível carregar as mensagens.' });
+    }
+});
+
+router.post('/tickets/:ticketId/glpi', requireAgent, async (req, res) => {
+    try {
+        const title = String(req.body?.title || '').trim();
+        if (!title) return res.status(400).json({ success: false, error: 'Informe o título do chamado.' });
+        if (title.length > 255) return res.status(400).json({ success: false, error: 'O título deve ter no máximo 255 caracteres.' });
+        const messageIds = Array.isArray(req.body?.messageIds) ? [...new Set(req.body.messageIds.map(String))] : [];
+        const attachmentMessageIds = Array.isArray(req.body?.attachmentMessageIds) ? [...new Set(req.body.attachmentMessageIds.map(String))] : [];
+        if (!messageIds.length) return res.status(400).json({ success: false, error: 'Selecione pelo menos uma mensagem.' });
+        if (messageIds.some(id => !/^[a-f\d]{24}$/i.test(id))) return res.status(400).json({ success: false, error: 'A seleção contém uma mensagem inválida.' });
+        if (attachmentMessageIds.some(id => !messageIds.includes(id))) return res.status(400).json({ success: false, error: 'Só é possível anexar arquivos de mensagens selecionadas.' });
+
+        const ticket = await Ticket.findById(req.params.ticketId);
+        if (!ticket) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
+        const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
+        const messages = await Message.find({
+            ticketId: ticket._id,
+            _id: { $in: messageIds },
+            timestamp: { $gte: since },
+            isInternalEvent: { $ne: true }
+        }).sort({ timestamp: 1 }).lean();
+        if (!messages.length) return res.status(400).json({ success: false, error: 'Nenhuma das mensagens selecionadas está disponível nas últimas 48 horas.' });
+
+        const mediaDirectory = path.resolve(__dirname, '..', '..', '..', 'storage', 'media');
+        const attachments = messages.filter(message => attachmentMessageIds.includes(String(message._id)) && message.hasMedia && message.mediaPath).flatMap(message => {
+            const filePath = path.resolve(mediaDirectory, message.mediaPath);
+            if (!filePath.startsWith(`${mediaDirectory}${path.sep}`)) return [];
+            return [{ filePath, fileName: message.mediaFileName || path.basename(filePath), mimeType: message.mediaMimeType }];
+        });
+        const created = await glpiService.createTicket({ title, messages, attachments });
+        const glpiTicketUrl = glpiService.ticketUrl(created.id);
+        await whatsappService.recordGlpiTicketEvent(ticket, req.agent, created.id, glpiTicketUrl)
+            .catch(err => console.error('[GLPI][REGISTRAR EVENTO]', err.message));
+        await audit(req, 'glpi.ticket_create', {
+            targetType: 'ticket',
+            targetId: ticket._id,
+            details: {
+                glpiTicketId: created.id,
+                messageCount: messages.length,
+                uploadedAttachmentCount: created.uploadedAttachments.length,
+                failedAttachmentCount: created.failedAttachments.length
+            }
+        });
+        const failedCount = created.failedAttachments.length;
+        res.status(201).json({
+            success: true,
+            message: failedCount
+                ? `Chamado #${created.id} aberto, mas ${failedCount} arquivo(s) não puderam ser anexados.`
+                : `Chamado #${created.id} aberto com ${created.uploadedAttachments.length} arquivo(s)!`,
+            data: { id: created.id, url: glpiTicketUrl, messageCount: messages.length, uploadedAttachments: created.uploadedAttachments, failedAttachments: created.failedAttachments }
+        });
+    } catch (err) {
+        console.error('[GLPI][ABRIR CHAMADO]', err.message);
+        res.status(502).json({ success: false, error: err.message || 'Não foi possível abrir o chamado no GLPI.' });
     }
 });
 

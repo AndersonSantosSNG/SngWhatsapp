@@ -32,6 +32,12 @@ describe('ChatPanel', () => {
     expect(screen.queryByPlaceholderText('Digite uma mensagem')).not.toBeInTheDocument();
   });
 
+  it('abre a janela para criar um chamado no GLPI', () => {
+    render(<ChatPanel {...baseProps} messages={[]} onSend={vi.fn()} onCreateGlpiTicket={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Abrir chamado' }));
+    expect(screen.getByRole('dialog', { name: 'Abrir chamado' })).toBeVisible();
+  });
+
   it('rola até a mensagem citada e destaca a original', () => {
     const messages = [
       { _id: 'original', sender: 'client', body: 'Original' },

@@ -81,6 +81,18 @@ describe('autenticação e autorização', () => {
 });
 
 describe('atendimentos', () => {
+    it('lista apenas mensagens das últimas 48 horas para seleção no GLPI', async () => {
+        await createAgent('agent@sng.com.br');
+        const { authorization } = await login('agent@sng.com.br');
+        const ticket = await Ticket.create({ phoneNumber: '5500000000001' });
+        await Message.create({ ticketId: ticket._id, phoneNumber: ticket.phoneNumber, sender: 'client', body: 'Recente', timestamp: new Date() });
+        await Message.create({ ticketId: ticket._id, phoneNumber: ticket.phoneNumber, sender: 'client', body: 'Antiga', timestamp: new Date(Date.now() - 49 * 60 * 60 * 1000) });
+        await Message.create({ ticketId: ticket._id, phoneNumber: ticket.phoneNumber, sender: 'agent', body: 'Evento', isInternalEvent: true });
+
+        const response = await request(app).get(`/api/tickets/${ticket._id}/glpi/messages`).set('Authorization', authorization).expect(200);
+        expect(response.body.data.map(message => message.body)).toEqual(['Recente']);
+    });
+
     it('permite somente um vencedor ao assumir o mesmo ticket', async () => {
         await Promise.all([createAgent('a@sng.com.br'), createAgent('b@sng.com.br')]);
         const [{ authorization: first }, { authorization: second }] = await Promise.all([login('a@sng.com.br'), login('b@sng.com.br')]);

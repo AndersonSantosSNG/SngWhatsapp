@@ -61,6 +61,18 @@ export default function App() {
       if (showLoading) setTicketsLoading(false);
     }
   }, []);
+  const syncTicket = useCallback(ticket => {
+    if (!ticket?._id) return;
+    const ticketId = String(ticket._id);
+    setTickets(current => {
+      const found = current.some(item => String(item._id) === ticketId);
+      const next = found
+        ? current.map(item => String(item._id) === ticketId ? { ...item, ...ticket } : item)
+        : [ticket, ...current];
+      return next.sort((a, b) => new Date(b.lastMessageAt || b.updatedAt || 0) - new Date(a.lastMessageAt || a.updatedAt || 0));
+    });
+    setActiveTicket(current => String(current?._id || '') === ticketId ? { ...current, ...ticket } : current);
+  }, []);
   const loadWhatsAppStatus = useCallback(async () => {
     try {
       const response = await fetch('/api/qr');
@@ -163,13 +175,14 @@ export default function App() {
   }, [initializing, serverAvailable, agent]);
 
   useEffect(() => {
-    const onConnect = () => { setServerAvailable(true); loadWhatsAppStatus(); };
+    const onConnect = () => { setServerAvailable(true); loadWhatsAppStatus(); loadTickets({ showLoading: false }).catch(console.error); };
     const onDisconnect = () => { setServerAvailable(false); setConnected(false); setQr(''); showToast('Conexão com o servidor perdida. Tentando reconectar...', 'error'); };
     const onQr = data => { setQr(data.qr); setConnected(false); };
     const onMessage = data => {
       const message = data.message || data;
       setConnected(true);
-      loadTickets({ showLoading: false }).catch(console.error);
+      if (data.ticket) syncTicket(data.ticket);
+      else loadTickets({ showLoading: false }).catch(console.error);
       if (activeTicket?._id === message.ticketId) setMessages(current => current.some(item => (item.id || item._id) === message.id) ? current : [...current, message]);
       if (agent && !message.fromMe && activeTicket?._id !== message.ticketId) {
         setUnreadByTicket(current => {
@@ -180,12 +193,14 @@ export default function App() {
     };
     const onAck = ({ messageId, ack }) => setMessages(current => current.map(message => (message.id || message._id) === messageId ? { ...message, ack } : message));
     const onTicketEvent = event => {
+      if (event.ticket) syncTicket(event.ticket);
+      else loadTickets({ showLoading: false }).catch(console.error);
       if (activeTicket?._id === event.ticketId) setMessages(current => current.some(item => (item.id || item._id) === event.id) ? current : [...current, event]);
     };
-    const onHistorySyncComplete = () => loadTickets().catch(console.error);
+    const onHistorySyncComplete = () => loadTickets({ showLoading: false }).catch(console.error);
     socket.on('connect', onConnect); socket.on('disconnect', onDisconnect); socket.on('qr_code', onQr); socket.on('new_message', onMessage); socket.on('message_ack', onAck); socket.on('ticket_event', onTicketEvent); socket.on('history_sync_complete', onHistorySyncComplete);
     return () => { socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); socket.off('qr_code', onQr); socket.off('new_message', onMessage); socket.off('message_ack', onAck); socket.off('ticket_event', onTicketEvent); socket.off('history_sync_complete', onHistorySyncComplete); };
-  }, [activeTicket?._id, agent?._id, loadTickets, loadWhatsAppStatus]);
+  }, [activeTicket?._id, agent?._id, loadTickets, loadWhatsAppStatus, syncTicket]);
 
   useEffect(() => {
     if (!agent || tab !== 'dashboard') return undefined;
@@ -227,7 +242,7 @@ export default function App() {
   const updateTicket = async action => {
     try {
       const result = await api(`/tickets/${action}`, { method: 'POST', body: JSON.stringify({ ticketId: activeTicket._id }) });
-      setActiveTicket(result.data); await loadTickets(); showToast(result.message || 'Atendimento atualizado.');
+      syncTicket(result.data); showToast(result.message || 'Atendimento atualizado.');
       return true;
     } catch (err) {
       await loadTickets({ showLoading: false }).catch(() => {});
@@ -237,6 +252,11 @@ export default function App() {
   };
   const toggle = () => updateTicket(activeTicket.status === 'open' ? 'unclaim' : 'claim');
   const close = async () => { const closed = await updateTicket('close'); if (closed) { setActiveTicket(null); setMessages([]); } return closed; };
+  const createGlpiTicket = async (title, messageIds, attachmentMessageIds) => {
+    const result = await api(`/tickets/${activeTicket._id}/glpi`, { method: 'POST', body: JSON.stringify({ title, messageIds, attachmentMessageIds }) });
+    showToast(result.message, result.data.failedAttachments?.length ? 'error' : 'success');
+    return result.data;
+  };
   const closeView = async () => {
     const ticket = activeTicket;
     setActiveTicket(null);
@@ -257,9 +277,9 @@ export default function App() {
     return <div className="app-loading" role="status" aria-live="polite"><div className="loading-mark"><div className="loading-spinner" /><img src={logo} alt="SNG" /></div><span>Conectando ao servidor...</span></div>;
   }
 
-  return <div className="app-shell">
+  return <div className={`app-shell ${agent && tab === 'tickets' && activeTicket ? 'mobile-chat-open' : ''}`}>
     {agent && <Sidebar {...{ tab, setTab, agent, connected, collapsed, setCollapsed, logout }} />}
-    {agent && tab === 'tickets' && <main className={`conversations-layout ${activeTicket ? 'has-active-ticket' : ''}`}><TicketList {...{ tickets, loading: ticketsLoading, activeId: activeTicket?._id, agentId: agent._id, unreadByTicket, onSelect: selectTicket, reload: loadTickets, onNewConversation: startConversation, theme, setTheme }} /><ChatPanel ticket={activeTicket} messages={messages} unreadMarker={unreadMarker} contactOnline={contactOnline} hasOlderMessages={hasOlderMessages} loadingOlderMessages={loadingOlderMessages} onLoadOlder={loadOlderMessages} onSend={send} onFile={sendFile} onToggle={toggle} onClose={close} onBack={closeView} onOpenImage={setViewer} /></main>}
+    {agent && tab === 'tickets' && <main className={`conversations-layout ${activeTicket ? 'has-active-ticket' : ''}`}><TicketList {...{ tickets, loading: ticketsLoading, activeId: activeTicket?._id, agentId: agent._id, unreadByTicket, onSelect: selectTicket, reload: loadTickets, onNewConversation: startConversation, theme, setTheme }} /><ChatPanel ticket={activeTicket} messages={messages} unreadMarker={unreadMarker} contactOnline={contactOnline} hasOlderMessages={hasOlderMessages} loadingOlderMessages={loadingOlderMessages} onLoadOlder={loadOlderMessages} onSend={send} onFile={sendFile} onToggle={toggle} onClose={close} onCreateGlpiTicket={createGlpiTicket} onBack={closeView} onOpenImage={setViewer} /></main>}
     {agent && tab === 'dashboard' && <Dashboard connected={connected} qr={qr} />}
     {agent && tab === 'settings' && <Settings agent={agent} onAgentChange={setAgent} />}
     {!agent && <LoginModal onLogin={login} notice={authNotice} />}

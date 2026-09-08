@@ -138,6 +138,7 @@ button { cursor: pointer; }
 .internal-event { display: flex; justify-content: center; margin: 10px 0; padding: 0 12px; }
 .internal-event > span { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 7px; padding: 6px 12px; border: 1px solid rgba(148,163,184,.18); border-radius: 999px; color: #94a3b8; background: rgba(15,23,42,.78); font-size: 11px; text-align: center; }
 .internal-event i { color: #34d399; }
+.internal-event a { color: #60a5fa; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
 .internal-event time { color: #64748b; }
 .message-row.mine { justify-content: flex-end; }
 .message-bubble { position: relative; max-width: min(560px, 72%); min-width: 90px; padding: 9px 12px 20px; border-radius: 11px; background: #202c33; box-shadow: 0 1px 2px rgba(0,0,0,.2); font-size: 13px; line-height: 1.45; transition: background-color 1.1s ease, box-shadow 1.1s ease; }
@@ -349,6 +350,9 @@ body[data-theme="light"] .api-client-row code { color: #047857; }
     .api-client-row button { flex: 1; }
 }
 @media (max-width: 640px) {
+    .app-shell.mobile-chat-open { padding-bottom: 0; }
+    .app-shell.mobile-chat-open .sidebar { display: none; }
+    .app-shell.mobile-chat-open .chat-actions .close-view { display: none; }
     .conversations-layout { position: relative; overflow: hidden; }
     .ticket-column, .chat-panel { position: absolute; inset: 0; width: 100%; min-width: 0; }
     .conversations-layout:not(.has-active-ticket) .chat-panel { display: none; }
@@ -407,6 +411,42 @@ body[data-theme="light"] .api-client-row code { color: #047857; }
 .close-ticket-actions button { padding: 10px 14px; border: 1px solid #64748b; border-radius: 8px; }
 .close-ticket-actions button:disabled { opacity: .6; cursor: wait; }
 body[data-theme="light"] .close-ticket-dialog { color: #334155; }
+.glpi-ticket-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; color: #e2e8f0; padding: 24px; }
+.glpi-ticket-dialog::backdrop { background: rgba(2,6,23,.8); backdrop-filter: blur(6px); }
+.glpi-ticket-dialog h2 { margin-top: 0; }
+.glpi-ticket-dialog label { display: grid; gap: 8px; margin-top: 20px; font-weight: 700; }
+.glpi-ticket-dialog input { width: 100%; padding: 12px 14px; border: 1px solid #475569; border-radius: 8px; background: #0f172a; color: #f8fafc; }
+.glpi-history-summary { padding: 12px; border-radius: 8px; background: rgba(16,185,129,.12); color: #6ee7b7; }
+.glpi-message-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 20px; }
+.glpi-message-heading > strong { min-width: 0; }
+.glpi-message-heading button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; flex: none; min-height: 34px; padding: 7px 11px; border: 1px solid rgba(96,165,250,.35); border-radius: 9px; color: #93c5fd; background: rgba(59,130,246,.1); font-size: 12px; font-weight: 700; line-height: 1; white-space: nowrap; transition: color .15s, background .15s, border-color .15s, transform .15s; }
+.glpi-message-heading button:hover:not(:disabled) { color: #dbeafe; background: rgba(59,130,246,.2); border-color: rgba(96,165,250,.65); transform: translateY(-1px); }
+.glpi-message-heading button.clear-selection { color: #cbd5e1; background: rgba(148,163,184,.08); border-color: rgba(148,163,184,.3); }
+.glpi-message-heading button.clear-selection:hover:not(:disabled) { color: #f8fafc; background: rgba(148,163,184,.16); border-color: rgba(148,163,184,.5); }
+.glpi-message-list { display: grid; gap: 8px; max-height: min(360px, 40dvh); overflow: auto; margin-top: 10px; padding-right: 4px; }
+.glpi-message-option { display: flex !important; grid-template-columns: none !important; align-items: flex-start; gap: 10px !important; margin: 0 !important; padding: 10px; border: 1px solid #334155; border-radius: 8px; cursor: pointer; font-weight: 400 !important; }
+.glpi-message-option.selected { border-color: rgba(16,185,129,.45); background: rgba(16,185,129,.06); }
+.glpi-message-option input { width: 17px; height: 17px; margin-top: 2px; padding: 0; accent-color: #10b981; }
+.glpi-message-option > span { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; min-width: 0; flex: 1; }
+.glpi-message-option > span > span { grid-column: 1 / -1; overflow-wrap: anywhere; color: #cbd5e1; }
+.glpi-message-option small { color: #94a3b8; }
+.glpi-media-preview { display: grid; grid-column: 1 / -1; gap: 7px; min-width: 0; margin-top: 5px; color: #60a5fa; font-size: 12px; font-weight: 600; }
+.glpi-media-preview > span { display: flex; align-items: center; gap: 7px; overflow-wrap: anywhere; }
+.glpi-media-preview audio, .glpi-media-preview video { width: min(100%, 360px); max-height: 220px; }
+.glpi-media-preview.image { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+.glpi-media-preview.image img { width: 72px; height: 72px; flex: none; border-radius: 7px; object-fit: cover; background: #0f172a; }
+.glpi-media-preview.file { display: flex; align-items: center; gap: 8px; text-decoration: none; }
+.glpi-media-unavailable { display: flex; grid-column: 1 / -1; align-items: center; gap: 7px; margin-top: 5px; color: #f59e0b !important; font-size: 12px; }
+body[data-theme="light"] .glpi-ticket-dialog { color: #334155; }
+body[data-theme="light"] .glpi-ticket-dialog input { background: #fff; color: #0f172a; }
+body[data-theme="light"] .glpi-message-heading button { color: #2563eb; background: #eff6ff; border-color: #bfdbfe; }
+body[data-theme="light"] .glpi-message-heading button.clear-selection { color: #475569; background: #f8fafc; border-color: #cbd5e1; }
+body[data-theme="light"] .glpi-message-option { border-color: #cbd5e1; }
+body[data-theme="light"] .glpi-message-option > span > span { color: #475569; }
+@media (max-width: 480px) {
+    .glpi-message-heading { align-items: flex-start; flex-direction: column; gap: 10px; }
+    .glpi-message-heading button { width: auto; }
+}
 
 .audio-recorder { flex: none; min-width: 0; }
 .audio-recorder[hidden] { display: none; }

@@ -1357,6 +1357,7 @@ async function recordTicketEvent(ticket, agent, action) {
     const eventData = {
         id: savedEvent._id.toString(),
         ticketId: ticket._id.toString(),
+        ticket: typeof ticket.toObject === 'function' ? ticket.toObject() : ticket,
         sender: 'agent',
         body: savedEvent.body,
         isInternalEvent: true,
@@ -1366,6 +1367,39 @@ async function recordTicketEvent(ticket, agent, action) {
         fromMe: true
     };
 
+    if (ioInstance) ioInstance.emit('ticket_event', eventData);
+    return eventData;
+}
+
+async function recordGlpiTicketEvent(ticket, agent, glpiTicketId, glpiTicketUrl) {
+    if (!ticket || !agent || !glpiTicketId) throw new Error('Dados do chamado GLPI inválidos.');
+    const body = `${agent.name} abriu um chamado ${glpiTicketId}`;
+    const savedEvent = await Message.create({
+        ticketId: ticket._id,
+        phoneNumber: ticket.phoneNumber,
+        sender: 'agent',
+        isInternalEvent: true,
+        internalAction: 'glpi_created',
+        internalActorName: agent.name,
+        glpiTicketId: String(glpiTicketId),
+        glpiTicketUrl,
+        body,
+        timestamp: new Date()
+    });
+    const eventData = {
+        id: savedEvent._id.toString(),
+        ticketId: ticket._id.toString(),
+        ticket: typeof ticket.toObject === 'function' ? ticket.toObject() : ticket,
+        sender: 'agent',
+        body,
+        isInternalEvent: true,
+        internalAction: 'glpi_created',
+        internalActorName: agent.name,
+        glpiTicketId: String(glpiTicketId),
+        glpiTicketUrl,
+        timestamp: savedEvent.timestamp,
+        fromMe: true
+    };
     if (ioInstance) ioInstance.emit('ticket_event', eventData);
     return eventData;
 }
@@ -1382,6 +1416,7 @@ module.exports = {
     getContactPresence,
     getContactMetadata,
     recordTicketEvent,
+    recordGlpiTicketEvent,
     getProfilePicture,
     getChatMetadata
 };
