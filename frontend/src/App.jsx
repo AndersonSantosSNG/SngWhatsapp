@@ -67,6 +67,7 @@ export default function App() {
       const result = await response.json();
       setConnected(Boolean(result.connected));
       if (result.qr) setQr(result.qr);
+      else if (!result.connected) setQr('');
     } catch { setConnected(false); }
   }, []);
   const discardTemporaryTicket = async ticket => {
@@ -163,7 +164,7 @@ export default function App() {
 
   useEffect(() => {
     const onConnect = () => { setServerAvailable(true); loadWhatsAppStatus(); };
-    const onDisconnect = () => { setServerAvailable(false); setConnected(false); showToast('Conexão com o servidor perdida. Tentando reconectar...', 'error'); };
+    const onDisconnect = () => { setServerAvailable(false); setConnected(false); setQr(''); showToast('Conexão com o servidor perdida. Tentando reconectar...', 'error'); };
     const onQr = data => { setQr(data.qr); setConnected(false); };
     const onMessage = data => {
       const message = data.message || data;
@@ -185,6 +186,13 @@ export default function App() {
     socket.on('connect', onConnect); socket.on('disconnect', onDisconnect); socket.on('qr_code', onQr); socket.on('new_message', onMessage); socket.on('message_ack', onAck); socket.on('ticket_event', onTicketEvent); socket.on('history_sync_complete', onHistorySyncComplete);
     return () => { socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); socket.off('qr_code', onQr); socket.off('new_message', onMessage); socket.off('message_ack', onAck); socket.off('ticket_event', onTicketEvent); socket.off('history_sync_complete', onHistorySyncComplete); };
   }, [activeTicket?._id, agent?._id, loadTickets, loadWhatsAppStatus]);
+
+  useEffect(() => {
+    if (!agent || tab !== 'dashboard') return undefined;
+    loadWhatsAppStatus();
+    const interval = setInterval(loadWhatsAppStatus, 3000);
+    return () => clearInterval(interval);
+  }, [agent, tab, loadWhatsAppStatus]);
 
   useEffect(() => {
     setContactOnline(false);
