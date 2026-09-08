@@ -158,8 +158,8 @@ button { cursor: pointer; }
 .message-image, .message-video { display: block; width: auto; max-width: min(460px, 100%); max-height: 520px; object-fit: contain; border-radius: 8px; cursor: pointer; }
 .file-link { color: inherit; text-decoration: none; }
 .composer { flex: none; display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: rgba(30,41,59,.97); border-top: 1px solid #334155; }
-.composer.with-reply { flex-wrap: wrap; }
-.composer-feedback { order: -1; flex-basis: 100%; display: flex; align-items: center; gap: 7px; padding: 7px 10px; border-radius: 7px; font-size: 11px; }
+.composer.with-reply, .composer:has(> .composer-feedback) { flex-wrap: wrap; }
+.composer-feedback { order: -1; flex: 0 0 100%; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid rgba(251,113,133,.2); border-radius: 10px; font-size: 12px; line-height: 1.5; }
 .composer-feedback.error { color: #fecdd3; background: rgba(225,29,72,.16); }
 .reply-preview { order: -1; flex-basis: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-left: 3px solid #34d399; border-radius: 7px; color: #cbd5e1; background: rgba(15,23,42,.75); }
 .reply-preview > div { min-width: 0; display: grid; gap: 2px; }
@@ -459,3 +459,11 @@ body[data-theme="light"] .message-audio audio { color-scheme: light; }
 @media (max-width: 600px) {
   .message-bubble:has(.message-audio) { width: 320px; max-width: 94%; padding: 10px 8px 24px; }
 }
+
+.composer-feedback > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.composer-feedback > i { flex: none; }
+.composer .composer-feedback button { flex: none; width: 28px; height: 28px; padding: 0; border-radius: 7px; background: transparent; color: inherit; }
+.composer .composer-feedback button:hover { background: rgba(251,113,133,.15); }
+.composer .composer-feedback button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.composer > label, .composer > button { flex-shrink: 0; }
+body[data-theme="light"] .composer-feedback.error { color: #9f1239; background: #fff1f2; border-color: #fecdd3; }

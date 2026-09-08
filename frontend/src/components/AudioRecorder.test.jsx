@@ -43,7 +43,7 @@ describe('AudioRecorder', () => {
     expect(onSend).toHaveBeenCalledOnce();
     expect(onSend.mock.calls[0][0]).toBeInstanceOf(File);
     expect(onSend.mock.calls[0][0].type).toBe('audio/ogg;codecs=opus');
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:audio');
+    await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:audio'));
   });
   it('mantém gravação quando envio falha para tentar novamente', async () => {
     const onSend = vi.fn().mockRejectedValueOnce(new Error('Sem conexão')).mockResolvedValueOnce({});

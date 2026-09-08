@@ -1,3 +1,4 @@
+require('./whatsappCompatibility').applyCompatibility();
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const fs = require('fs/promises');
 const path = require('path');
@@ -6,6 +7,8 @@ const qrcodeTerminal = require('qrcode-terminal');
 const config = require('../config/whatsapp');
 const { addToQueue } = require('./queueService');
 const { convertVoiceAudio } = require('./audioService');
+const { sendAudio } = require('./audioSendService');
+const { displayMessageText } = require('./messageContent');
 
 const Ticket = require('../models/Ticket');
 const Message = require('../models/Message');
@@ -128,7 +131,7 @@ async function downloadMessageMediaFallback(msg) {
 }
 
 async function saveMessageMedia(msg) {
-    if (!msg.hasMedia) return null;
+    if (!msg.hasMedia && !['image', 'video', 'audio', 'ptt', 'document', 'sticker'].includes(msg.type)) return null;
 
     try {
         if (msg.id && !msg.id._serialized) {
@@ -343,7 +346,8 @@ async function fetchMessagesForHistory(chatId, cutoff) {
                 },
                 fromMe: Boolean(message.id?.fromMe),
                 author: serializeWid(message.author),
-                body: message.body || message.caption || '',
+                body: ['image', 'video', 'audio', 'ptt', 'document', 'sticker'].includes(message.type) ? (message.caption || '') : (message.body || ''),
+                mentionedIds: (message.mentionedJidList || []).map(serializeWid),
                 hasMedia: Boolean(message.mediaData || message.type === 'image' || message.type === 'video' || message.type === 'audio' || message.type === 'document' || message.type === 'ptt' || message.type === 'sticker'),
                 type: message.type || '',
                 mediaKey: message.mediaKey || message.mediaData?.mediaKey || '',
@@ -351,6 +355,7 @@ async function fetchMessagesForHistory(chatId, cutoff) {
                 ack: Number(message.ack),
                 _data: {
                     author: serializeWid(message.author),
+                    caption: message.caption || '',
                     notifyName: message.notifyName || message.senderObj?.pushname || '',
                     directPath: message.directPath || message.mediaData?.directPath || '',
                     encFilehash: message.encFilehash || message.mediaData?.encFilehash || '',
@@ -446,6 +451,8 @@ async function syncRecentMessages() {
 
                     const storedMessage = existingById.get(whatsappMessageId);
                     if (storedMessage) {
+                        const correctedBody = await displayMessageText(msg, client);
+                        if (correctedBody && storedMessage.body !== correctedBody) await Message.updateOne({ _id: storedMessage._id }, { $set: { body: correctedBody } });
                         if (msg.hasMedia && !storedMessage.hasMedia) {
                             const storedMedia = await saveHistoricalMessageMedia(msg);
                             if (storedMedia) {
@@ -457,7 +464,7 @@ async function syncRecentMessages() {
                     }
 
                     const sender = msg.fromMe ? 'agent' : 'client';
-                    const body = msg.body || (msg.hasMedia ? '[Mídia/Arquivo]' : '');
+                    const body = await displayMessageText(msg, client);
                     const timestamp = new Date(Number(msg.timestamp) * 1000);
                     const mediaInfo = await saveHistoricalMessageMedia(msg);
                     if (mediaInfo) downloadedMedia += 1;
@@ -746,7 +753,7 @@ function initWhatsApp(io) {
                 } catch (err) {}
             }
 
-            const bodyContent = msg.body || (msg.hasMedia ? '[Mídia/Arquivo]' : '');
+            const bodyContent = await displayMessageText(msg, client);
             const messageDate = new Date((Number(msg.timestamp) || Date.now() / 1000) * 1000);
             const mediaInfo = await saveMessageMedia(msg);
             const quotedInfo = await getQuotedContext(msg);
@@ -880,7 +887,7 @@ function initWhatsApp(io) {
 
             if (!identifier) return;
 
-            const bodyContent = msg.body || (msg.hasMedia ? '[Mídia/Arquivo]' : '');
+            const bodyContent = await displayMessageText(msg, client);
             const messageDate = new Date((Number(msg.timestamp) || Date.now() / 1000) * 1000);
             const mediaInfo = await takePendingOutgoingMedia(targetChatId) || await saveMessageMedia(msg);
             const quotedInfo = await getQuotedContext(msg);
@@ -1116,7 +1123,11 @@ async function sendMessage({ number, message, file, fileUrl, fileBase64, mimeTyp
         // Apenas envia a mensagem pelo WhatsApp. 
         // O evento 'message_create' vai capturar o envio e cuidar do banco de dados e do Socket.io sem duplicar.
         try {
-            await client.sendMessage(targetJid, payloadToSend, options);
+            if (payloadToSend instanceof MessageMedia && payloadToSend.mimetype.startsWith('audio/')) {
+                await sendAudio(client, targetJid, payloadToSend, options);
+            } else {
+                await client.sendMessage(targetJid, payloadToSend, options);
+            }
         } catch (err) {
             const index = pendingOutgoingMedia.indexOf(pendingMedia);
             if (index >= 0) pendingOutgoingMedia.splice(index, 1);
