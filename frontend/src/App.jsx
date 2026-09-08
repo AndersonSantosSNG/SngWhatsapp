@@ -208,14 +208,14 @@ export default function App() {
 
   const login = async (corporateEmail, password) => { const result = await api('/auth/login', { method: 'POST', body: JSON.stringify({ corporateEmail, password }) }); storage.set('agentAuthToken', result.token); socket.auth = { token: result.token }; socket.connect(); setAuthNotice(''); setAgent(result.data); await loadTickets(); };
   const logout = async () => { try { await api('/auth/logout', { method: 'POST' }); } catch {} socket.disconnect(); storage.remove('agentAuthToken'); setUnreadByTicket({}); setUnreadMarker(null); setAgent(null); };
-  const send = (message, replyToMessageId) => sendMessage({ number: activeTicket.phoneNumber, message, replyToMessageId });
+  const send = (message, replyToMessageId, { isClosingMessage = false } = {}) => sendMessage({ number: activeTicket.phoneNumber, message, replyToMessageId, isClosingMessage });
   const startConversation = async number => {
     const result = await api('/tickets/start', { method: 'POST', body: JSON.stringify({ phoneNumber: number }) });
     console.log('[NOVA CONVERSA][PAYLOAD WHATSAPP]', result.whatsappPayload);
     await loadTickets({ showLoading: false });
     await selectTicket({ ...result.data, contactName: result.data.contactName || result.data.name });
   };
-  const sendFile = async (file, caption, replyToMessageId) => { const data = await file.arrayBuffer(); let binary = ''; new Uint8Array(data).forEach(byte => { binary += String.fromCharCode(byte); }); await sendMessage({ number: activeTicket.phoneNumber, message: caption, replyToMessageId, fileBase64: btoa(binary), mimeType: file.type, fileName: file.name }); };
+  const sendFile = async (file, caption, replyToMessageId, sendAudioAsVoice = false) => { const number = activeTicket.phoneNumber; const data = await file.arrayBuffer(); let binary = ''; new Uint8Array(data).forEach(byte => { binary += String.fromCharCode(byte); }); await sendMessage({ number, sendAudioAsVoice, message: caption, replyToMessageId, fileBase64: btoa(binary), mimeType: file.type, fileName: file.name }); };
   const updateTicket = async action => {
     try {
       const result = await api(`/tickets/${action}`, { method: 'POST', body: JSON.stringify({ ticketId: activeTicket._id }) });
@@ -228,7 +228,7 @@ export default function App() {
     }
   };
   const toggle = () => updateTicket(activeTicket.status === 'open' ? 'unclaim' : 'claim');
-  const close = async () => { if (await updateTicket('close')) { setActiveTicket(null); setMessages([]); } };
+  const close = async () => { const closed = await updateTicket('close'); if (closed) { setActiveTicket(null); setMessages([]); } return closed; };
   const closeView = async () => {
     const ticket = activeTicket;
     setActiveTicket(null);

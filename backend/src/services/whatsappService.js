@@ -5,6 +5,7 @@ const { randomUUID } = require('crypto');
 const qrcodeTerminal = require('qrcode-terminal');
 const config = require('../config/whatsapp');
 const { addToQueue } = require('./queueService');
+const { convertVoiceAudio } = require('./audioService');
 
 const Ticket = require('../models/Ticket');
 const Message = require('../models/Message');
@@ -1039,7 +1040,7 @@ function initWhatsApp(io) {
     client.initialize().catch(err => console.error('❌ Falha ao inicializar o client:', err));
 }
 
-async function sendMessage({ number, message, file, fileUrl, fileBase64, mimeType, fileName, agentId, replyToMessageId }) {
+async function sendMessage({ number, message, file, fileUrl, fileBase64, mimeType, fileName, agentId, replyToMessageId, sendAudioAsVoice, isClosingMessage }) {
     if (!isClientReady || !client) {
         throw new Error('O serviço de WhatsApp não está pronto. Tente novamente em alguns instantes.');
     }
@@ -1048,7 +1049,7 @@ async function sendMessage({ number, message, file, fileUrl, fileBase64, mimeTyp
     if (agentId) {
         const agent = await Agent.findOne({ _id: agentId, active: true });
         if (!agent) throw new Error('Agente nao encontrado ou inativo.');
-        messageToSend = `${agent.name}: ${messageToSend}`;
+        if (sendAudioAsVoice !== true && isClosingMessage !== true) messageToSend = `${agent.name}: ${messageToSend}`;
     }
 
     const cleanId = number.replace(/\D/g, '');
@@ -1082,6 +1083,16 @@ async function sendMessage({ number, message, file, fileUrl, fileBase64, mimeTyp
         } else if (fileBase64) {
             payloadToSend = new MessageMedia(mimeType || 'application/octet-stream', fileBase64, fileName || 'arquivo');
             if (messageToSend) options.caption = messageToSend;
+        }
+
+        if (sendAudioAsVoice === true) {
+            if (!(payloadToSend instanceof MessageMedia) || !payloadToSend.mimetype.startsWith('audio/')) {
+                throw new Error('Forneça um arquivo de áudio para enviar como mensagem de voz.');
+            }
+            const voiceData = await convertVoiceAudio(payloadToSend.data);
+            payloadToSend = new MessageMedia('audio/ogg; codecs=opus', voiceData, 'audio.ogg');
+            options.sendAudioAsVoice = true;
+            delete options.caption;
         }
 
         let pendingMedia = null;

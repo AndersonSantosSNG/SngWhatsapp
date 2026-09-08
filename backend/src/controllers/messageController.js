@@ -9,7 +9,7 @@ const handleSendMessage = async (req, res) => {
         });
     }
 
-    const { number, message, fileUrl, fileBase64, mimeType, fileName, agentId, replyToMessageId } = req.body;
+    const { number, message, fileUrl, fileBase64, mimeType, fileName, agentId, replyToMessageId, sendAudioAsVoice, isClosingMessage } = req.body;
     const file = req.file;
 
     if (!number) {
@@ -21,7 +21,7 @@ const handleSendMessage = async (req, res) => {
     }
 
     try {
-        await whatsappService.sendMessage({ number, message, file, fileUrl, fileBase64, mimeType, fileName, agentId, replyToMessageId });
+        await whatsappService.sendMessage({ number, message, file, fileUrl, fileBase64, mimeType, fileName, agentId, replyToMessageId, sendAudioAsVoice, isClosingMessage });
 
         return res.json({ 
             status: 'success',
