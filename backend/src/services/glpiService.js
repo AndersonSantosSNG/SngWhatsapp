@@ -11,7 +11,7 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
-function formatConversationHistory(messages) {
+function formatConversationHistory(messages, contactName = 'Usuário') {
     const formatter = new Intl.DateTimeFormat('pt-BR', {
         timeZone: 'America/Sao_Paulo',
         hour: '2-digit',
@@ -19,9 +19,12 @@ function formatConversationHistory(messages) {
         hour12: false
     });
     const lines = messages.map(message => {
-        const author = message.sender === 'agent' ? 'Agente' : 'Usuário';
         const body = message.body || (message.hasMedia ? '[Mídia/Arquivo]' : '[Mensagem sem texto]');
-        return `-${author}: ${escapeHtml(body)} (${formatter.format(new Date(message.timestamp))})`;
+        const escapedBody = escapeHtml(body);
+        const content = message.sender === 'agent'
+            ? escapedBody
+            : `${escapeHtml(message.groupSenderName || contactName || 'Usuário')}: ${escapedBody}`;
+        return `-${content} (${formatter.format(new Date(message.timestamp))})`;
     });
     return `Histórico conversa WhatsApp:<br><br>${lines.join('<br>')}`;
 }
@@ -75,7 +78,7 @@ async function uploadAttachment(sessionToken, ticketId, attachment) {
     return { id: document.id, fileName };
 }
 
-async function createTicket({ title, messages, attachments = [] }) {
+async function createTicket({ title, messages, contactName, attachments = [] }) {
     let sessionToken;
     try {
         const session = await glpiRequest('/initSession', {
@@ -88,7 +91,7 @@ async function createTicket({ title, messages, attachments = [] }) {
             method: 'POST',
             headers: { 'Session-Token': sessionToken },
             body: JSON.stringify({
-                input: { name: title, content: formatConversationHistory(messages), urgency: 3, type: 1 }
+                input: { name: title, content: formatConversationHistory(messages, contactName), urgency: 3, type: 1 }
             })
         });
         if (!result?.id) throw new Error('GLPI criou o chamado, mas não retornou o número.');

@@ -595,7 +595,7 @@ router.post('/tickets/:ticketId/glpi', requireAgent, async (req, res) => {
             if (!filePath.startsWith(`${mediaDirectory}${path.sep}`)) return [];
             return [{ filePath, fileName: message.mediaFileName || path.basename(filePath), mimeType: message.mediaMimeType }];
         });
-        const created = await glpiService.createTicket({ title, messages, attachments });
+        const created = await glpiService.createTicket({ title, messages, contactName: ticket.contactName, attachments });
         const glpiTicketUrl = glpiService.ticketUrl(created.id);
         await whatsappService.recordGlpiTicketEvent(ticket, req.agent, created.id, glpiTicketUrl)
             .catch(err => console.error('[GLPI][REGISTRAR EVENTO]', err.message));

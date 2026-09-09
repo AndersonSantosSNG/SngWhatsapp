@@ -6,10 +6,11 @@ describe('glpiService', () => {
         const history = formatConversationHistory([
             { sender: 'agent', body: 'Poderia informar o erro?', timestamp: '2026-09-08T14:24:00.000Z' },
             { sender: 'client', body: '<script>erro</script>', timestamp: '2026-09-08T14:25:00.000Z' }
-        ]);
+        ], 'Vicente');
 
-        expect(history).toContain('-Agente: Poderia informar o erro? (11:24)');
-        expect(history).toContain('-Usuário: &lt;script&gt;erro&lt;/script&gt; (11:25)');
+        expect(history).toContain('-Poderia informar o erro? (11:24)');
+        expect(history).toContain('-Vicente: &lt;script&gt;erro&lt;/script&gt; (11:25)');
+        expect(history).not.toContain('-Agente:');
         expect(history).not.toContain('<script>');
     });
 });
