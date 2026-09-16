@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { api, deleteMessage, editMessage, sendMessage } from './services/api';
 import Sidebar from './components/Sidebar';
@@ -9,10 +9,14 @@ import Settings from './components/Settings';
 import Dashboard from './components/Dashboard';
 import { storage } from './services/storage';
 import logo from './assets/logo.png';
+import notificationSound from './assets/notification.mp3';
+import alertFavicon from './assets/alertlogo.ico';
+import defaultFavicon from './assets/favicon.ico';
 
 const socket = io({ autoConnect: false, transports: ['websocket', 'polling'], reconnection: true, reconnectionAttempts: Infinity, reconnectionDelay: 1000, reconnectionDelayMax: 1000 });
 
 export default function App() {
+  const notificationAudio = useRef(null);
   const [initializing, setInitializing] = useState(true);
   const [serverAvailable, setServerAvailable] = useState(false);
   const [agent, setAgent] = useState(null);
@@ -184,6 +188,11 @@ export default function App() {
       if (data.chat) syncChat(data.chat);
       else loadChats({ showLoading: false }).catch(console.error);
       if (activeChat?._id === message.ticketId) setMessages(current => current.some(item => (item.id || item._id) === message.id) ? current : [...current, message]);
+      if (agent && !message.fromMe) {
+        if (!notificationAudio.current) notificationAudio.current = new Audio(notificationSound);
+        notificationAudio.current.currentTime = 0;
+        notificationAudio.current.play().catch(() => {});
+      }
       if (agent && !message.fromMe && activeChat?._id !== message.ticketId) {
         setUnreadByChat(current => {
           const unread = current[message.ticketId];
@@ -275,6 +284,11 @@ export default function App() {
   const totalUnread = Object.values(unreadByChat).reduce((total, unread) => total + unread.count, 0);
   useEffect(() => {
     document.title = totalUnread ? `(${totalUnread}) SNG Chat` : 'SNG Chat';
+    const favicon = document.querySelector('link[rel="icon"]') || document.createElement('link');
+    favicon.rel = 'icon';
+    favicon.type = 'image/x-icon';
+    favicon.href = totalUnread ? alertFavicon : defaultFavicon;
+    if (!favicon.parentNode) document.head.appendChild(favicon);
   }, [totalUnread]);
 
   if (initializing || !serverAvailable) {

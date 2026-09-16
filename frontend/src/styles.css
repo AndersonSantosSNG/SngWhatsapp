@@ -144,6 +144,7 @@ body[data-theme="light"] .chat-sort-menu > div button:hover, body[data-theme="li
 .date-separator { position: sticky; top: 8px; z-index: 5; width: 100%; margin: 14px 0; display: flex; justify-content: center; pointer-events: none; }
 .date-separator span { padding: 5px 12px; border: 0; border-radius: 999px; color: #cbd5e1; background: #243044; box-shadow: none; font-size: 11px; font-weight: 700; text-transform: capitalize; }
 .scroll-to-bottom { position: absolute; right: 24px; bottom: 82px; z-index: 3; width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid rgba(148,163,184,.25); border-radius: 50%; color: #e2e8f0; background: rgba(30,41,59,.94); box-shadow: 0 4px 14px rgba(2,6,23,.3); cursor: pointer; animation: fade-in .18s ease-out; transition: color .18s ease, background .18s ease, transform .18s ease; }
+.scroll-to-bottom.with-reply { bottom: 142px; }
 .scroll-to-bottom:hover { color: white; background: #059669; transform: translateY(-2px); }
 .message-row { position: relative; display: flex; margin: 5px 0; animation: slide-message .18s ease-out both; touch-action: pan-y; -webkit-touch-callout: none; }
 .message-row.menu-open { position: relative; z-index: 20; }
@@ -443,6 +444,7 @@ body[data-theme="light"] .api-client-row code { color: #047857; }
     .composer label, .composer button { width: 40px; height: 40px; flex: none; }
     .composer > input { height: 42px; padding: 0 13px; }
     .scroll-to-bottom { right: 14px; bottom: 68px; }
+    .scroll-to-bottom.with-reply { bottom: 126px; }
     .page { padding: 20px 14px; }
     .page > header { margin-bottom: 16px; }
     .card { padding: 20px 16px; border-radius: 13px; }
