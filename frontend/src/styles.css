@@ -456,6 +456,8 @@ body[data-theme="light"] .api-client-row code { color: #047857; }
 .close-chat-option input { width: 18px; height: 18px; accent-color: #059669; }
 .close-chat-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
 .close-chat-actions button { padding: 10px 14px; border: 1px solid #64748b; border-radius: 8px; }
+.close-chat-actions .secondary-action { color: #cbd5e1; background: #334155; }
+.close-chat-actions .secondary-action:hover:not(:disabled) { color: #f8fafc; background: #475569; }
 .close-chat-actions button:disabled { opacity: .6; cursor: wait; }
 body[data-theme="light"] .close-chat-dialog { color: #334155; }
 .delete-message-dialog { width: min(460px, calc(100vw - 32px)); color: #e2e8f0; padding: 24px; }

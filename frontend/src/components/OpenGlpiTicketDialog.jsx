@@ -99,7 +99,7 @@ export default function OpenGlpiTicketDialog({ chat, onCreate, onCancel }) {
       </div>
       <p className="glpi-history-summary"><i className="fa-solid fa-comments" /> {selectedIds.size} {selectedIds.size === 1 ? 'mensagem selecionada' : 'mensagens selecionadas'} · <i className="fa-solid fa-paperclip" /> {attachmentIds.size} {attachmentIds.size === 1 ? 'arquivo selecionado' : 'arquivos selecionados'}</p>
       {error && <p className="form-error" role="alert">{error}</p>}
-      <div className="close-ticket-actions"><button type="button" onClick={onCancel} disabled={creating}>Cancelar</button><button type="submit" className="submit-button" disabled={creating || loadingMessages || !title.trim() || !selectedIds.size}>{creating ? 'Abrindo...' : 'Abrir chamado'}</button></div>
+      <div className="close-chat-actions"><button type="button" className="secondary-action" onClick={onCancel} disabled={creating}>Cancelar</button><button type="submit" className="submit-button" disabled={creating || loadingMessages || !title.trim() || !selectedIds.size}>{creating ? 'Abrindo...' : 'Abrir chamado'}</button></div>
     </form>
   </dialog>;
 }
