@@ -431,7 +431,15 @@ async function syncRecentMessages() {
                 if (!recent.length) continue;
 
                 let storedChat = await Chat.findOne({ $or: [{ phoneNumber: identifier }, { whatsappId: chatId }] });
-                const displayName = getChatDisplayName(chat, identifier);
+                let displayName = getChatDisplayName(chat, identifier);
+                if (!isGroup && (!displayName || /^\+?\d+$/.test(String(displayName).replace(/[\s()-]/g, '')))) {
+                    try {
+                        const contactMetadata = await getContactMetadata(identifier);
+                        if (contactMetadata?.name && !/^\+?\d+$/.test(String(contactMetadata.name).replace(/[\s()-]/g, ''))) {
+                            displayName = contactMetadata.name;
+                        }
+                    } catch (err) {}
+                }
                 const latest = recent[recent.length - 1];
                 const latestBody = latest.body || (latest.hasMedia ? '[Mídia/Arquivo]' : '');
                 const latestDate = new Date(Number(latest.timestamp) * 1000);
