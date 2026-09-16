@@ -49,7 +49,17 @@ async function verifyPublishedAudio(client, sent, media) {
 }
 
 async function sendAudio(client, target, media, options) {
-    const input = { mimetype: media.mimetype, bytes: Buffer.from(media.data, 'base64').length, voice: options.sendAudioAsVoice === true };
+    const audio = Buffer.from(media.data || '', 'base64');
+    const isVoice = options.sendAudioAsVoice === true;
+    if (!audio.length) throw new Error('O arquivo de áudio está vazio. Grave novamente.');
+    if (!String(media.mimetype || '').startsWith('audio/')) {
+        throw new Error('O arquivo informado não possui um formato de áudio válido.');
+    }
+    if (isVoice && audio.subarray(0, 4).toString() !== 'OggS') {
+        throw new Error('A mensagem de voz precisa estar no formato OGG/Opus.');
+    }
+
+    const input = { mimetype: media.mimetype, bytes: audio.length, voice: isVoice };
     console.info('[AUDIO][ENVIO]', input);
     try {
         const sent = await client.sendMessage(target, media, { ...options, waitUntilMsgSent: true });
@@ -66,8 +76,8 @@ async function sendAudio(client, target, media, options) {
             hasFileHash: Boolean(raw.filehash),
             hasEncryptedHash: Boolean(raw.encFilehash)
         });
-        console.info('[AUDIO][VERIFICACAO_REMOTA]', await verifyPublishedAudio(client, sent, media));
-        // Do not retry automatically: the message has already been sent.
+        // Do not download the media again through private WhatsApp Web APIs here.
+        // waitUntilMsgSent already reports the result and avoids a false failure after delivery.
         return sent;
     } catch (err) {
         console.error('[AUDIO][FALHA]', { ...input, error: String(err.message || err) });

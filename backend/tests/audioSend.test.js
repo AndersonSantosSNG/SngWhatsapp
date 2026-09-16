@@ -9,7 +9,7 @@ describe('audio send result', () => {
             return new Promise(resolve => { finish = resolve; });
         } };
         let completed = false;
-        const promise = sendAudio(client, 'test', { mimetype: 'audio/ogg; codecs=opus', data: 'YWJj' }, { sendAudioAsVoice: true, quotedMessageId: 'reply' }).then(() => { completed = true; });
+        const promise = sendAudio(client, 'test', { mimetype: 'audio/ogg; codecs=opus', data: Buffer.from('OggS-test').toString('base64') }, { sendAudioAsVoice: true, quotedMessageId: 'reply' }).then(() => { completed = true; });
         await Promise.resolve();
         expect(completed).toBe(false);
         expect(receivedOptions).toEqual({ sendAudioAsVoice: true, quotedMessageId: 'reply', waitUntilMsgSent: true });
@@ -22,6 +22,11 @@ describe('audio send result', () => {
         const client = { sendMessage: async () => { attempts++; throw new Error('Upload failed'); } };
         await expect(sendAudio(client, 'test', { mimetype: 'audio/ogg', data: 'YWJj' }, {})).rejects.toThrow('Upload failed');
         expect(attempts).toBe(1);
+    });
+    it('rejects invalid voice media before calling WhatsApp', async () => {
+        const client = { sendMessage: vi.fn() };
+        await expect(sendAudio(client, 'test', { mimetype: 'audio/webm', data: 'YWJj' }, { sendAudioAsVoice: true })).rejects.toThrow('OGG/Opus');
+        expect(client.sendMessage).not.toHaveBeenCalled();
     });
 });
 
