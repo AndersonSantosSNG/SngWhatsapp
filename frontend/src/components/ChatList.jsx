@@ -35,6 +35,7 @@ export default function ChatList({ chats, loading, activeId, agentId, unreadByCh
   const [international, setInternational] = useState(false);
   const [countryCode, setCountryCode] = useState('');
   const [filter, setFilter] = useState('all');
+  const [sortOrder, setSortOrder] = useState('recent');
   const normalizedSearch = search.trim().toLocaleLowerCase('pt-BR');
   const visibleChats = chats.filter(chat => {
     if (filter === 'pending' && chat.status !== 'pending') return false;
@@ -48,6 +49,11 @@ export default function ChatList({ chats, loading, activeId, agentId, unreadByCh
     const phone = String(chat.phoneNumber || '').toLocaleLowerCase('pt-BR');
     const digits = normalizedSearch.replace(/\D/g, '');
     return name.includes(normalizedSearch) || phone.includes(normalizedSearch) || (digits && phone.replace(/\D/g, '').includes(digits));
+  }).sort((a, b) => {
+    if (sortOrder === 'name') return String(a.contactName || a.phoneNumber || '').localeCompare(String(b.contactName || b.phoneNumber || ''), 'pt-BR', { sensitivity: 'base' });
+    const aTime = new Date(a.lastMessageAt || a.updatedAt || 0).getTime() || 0;
+    const bTime = new Date(b.lastMessageAt || b.updatedAt || 0).getTime() || 0;
+    return sortOrder === 'oldest' ? aTime - bTime : bTime - aTime;
   });
   const submitNewConversation = async event => {
     event.preventDefault();
@@ -77,7 +83,7 @@ export default function ChatList({ chats, loading, activeId, agentId, unreadByCh
       <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} title="Alternar tema"><i className={`fa-solid ${theme === 'light' ? 'fa-moon' : 'fa-sun'}`} /></button>
       <button onClick={reload} title="Recarregar"><i className="fa-solid fa-rotate-right" /></button>
     </div></header>
-    <div className="conversation-search"><i className="fa-solid fa-magnifying-glass" /><input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Pesquisar nome ou número" aria-label="Pesquisar conversas" />{search && <button type="button" onClick={() => setSearch('')} aria-label="Limpar pesquisa"><i className="fa-solid fa-xmark" /></button>}</div>
+    <div className="conversation-toolbar"><div className="conversation-search"><i className="fa-solid fa-magnifying-glass" /><input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Pesquisar nome ou número" aria-label="Pesquisar conversas" />{search && <button type="button" onClick={() => setSearch('')} aria-label="Limpar pesquisa"><i className="fa-solid fa-xmark" /></button>}</div><details className="chat-sort-menu"><summary title="Ordenar conversas" aria-label="Ordenar conversas"><i className="fa-solid fa-arrow-down-wide-short" /></summary><div role="menu">{[['recent', 'Mais recentes primeiro'], ['oldest', 'Mais antigas primeiro'], ['name', 'Nome A–Z']].map(([value, label]) => <button type="button" role="menuitem" key={value} className={sortOrder === value ? 'active' : ''} onClick={event => { setSortOrder(value); event.currentTarget.closest('details')?.removeAttribute('open'); }}><i className={`fa-solid ${sortOrder === value ? 'fa-check' : 'fa-fw'}`} />{label}</button>)}</div></details></div>
     <div className="chat-filters">{[['all', 'Todas'], ['mine', 'Meus atendimentos'], ['pending', 'Pendentes'], ['open', 'Em atendimento'], ['closed', 'Encerradas'], ['unread', 'Não lidas'], ['groups', 'Grupos']].map(([value, label]) => <button type="button" key={value} className={filter === value ? 'active' : ''} onClick={() => setFilter(value)}>{label}</button>)}</div>
     <div className="chat-list">
       {loading && <div className="chat-loading" role="status" aria-label="Carregando conversas"><div className="chat-spinner" /><span>Carregando conversas...</span></div>}

@@ -67,9 +67,11 @@ export default function MessageBubble({ message, isGroup, onImage, onReply, onEd
   useEffect(() => () => clearTimeout(longPressTimer.current), []);
   if (message.isInternalEvent) {
     const eventDate = new Date(message.timestamp || message.createdAt || Date.now()).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
-    const icons = { claimed: 'fa-user-check', unclaimed: 'fa-arrow-rotate-left', closed: 'fa-circle-check', glpi_created: 'fa-circle-check', call_received: 'fa-phone-slash' };
+    const icons = { claimed: 'fa-user-check', unclaimed: 'fa-arrow-rotate-left', closed: 'fa-circle-check', glpi_created: 'fa-circle-check', call_received: 'fa-phone-volume', call_missed: 'fa-phone-slash', call_rejected: 'fa-phone-slash', call_made: 'fa-phone' };
     const glpiEvent = message.internalAction === 'glpi_created' && message.glpiTicketId;
-    return <div className="internal-event"><span><i className={`fa-solid ${icons[message.internalAction] || 'fa-circle-info'}`} />{glpiEvent ? <>{message.internalActorName} abriu um chamado <a href={message.glpiTicketUrl} target="_blank" rel="noopener noreferrer">{message.glpiTicketId}</a></> : message.body}<time>{eventDate}</time></span></div>;
+    const callEvent = String(message.internalAction || '').startsWith('call_');
+    const callFromMe = message.fromMe ?? message.sender === 'agent';
+    return <div className={`internal-event ${callEvent ? `call-event ${callFromMe ? 'call-outgoing' : 'call-incoming'}` : ''}`}><span><i className={`fa-solid ${callEvent ? (callFromMe ? 'fa-arrow-up' : 'fa-arrow-down') : (icons[message.internalAction] || 'fa-circle-info')}`} />{callEvent && <strong className="call-origin">{callFromMe ? 'Você' : 'Contato'}</strong>}{glpiEvent ? <>{message.internalActorName} abriu um chamado <a href={message.glpiTicketUrl} target="_blank" rel="noopener noreferrer">{message.glpiTicketId}</a></> : message.body}{callEvent && ['call_missed', 'call_rejected'].includes(message.internalAction) && <i className="fa-solid fa-phone-slash call-status-icon" aria-label={message.internalAction === 'call_missed' ? 'Chamada perdida' : 'Chamada negada'} /> }<time>{eventDate}</time></span></div>;
   }
   const fromMe = message.fromMe ?? message.sender === 'agent';
   const rawTime = message.timestamp || message.createdAt;

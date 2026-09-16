@@ -181,7 +181,7 @@ export default function App() {
     const onMessage = data => {
       const message = data.message || data;
       setConnected(true);
-      if (data.ticket) syncChat(data.ticket);
+      if (data.chat) syncChat(data.chat);
       else loadChats({ showLoading: false }).catch(console.error);
       if (activeChat?._id === message.ticketId) setMessages(current => current.some(item => (item.id || item._id) === message.id) ? current : [...current, message]);
       if (agent && !message.fromMe && activeChat?._id !== message.ticketId) {
@@ -195,7 +195,7 @@ export default function App() {
     const onEdit = ({ messageId, body, editedAt }) => setMessages(current => current.map(message => String(message.id || message._id) === String(messageId) ? { ...message, body, editedAt } : message));
     const onRevoke = ({ messageId, deletedAt }) => setMessages(current => current.map(message => String(message.id || message._id) === String(messageId) ? { ...message, deletedAt } : message));
     const onTicketEvent = event => {
-      if (event.ticket) syncChat(event.ticket);
+      if (event.chat) syncChat(event.chat);
       else loadChats({ showLoading: false }).catch(console.error);
       if (activeChat?._id === event.ticketId) setMessages(current => current.some(item => (item.id || item._id) === event.id) ? current : [...current, event]);
     };

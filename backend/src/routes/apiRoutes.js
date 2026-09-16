@@ -353,22 +353,24 @@ router.get('/tickets', requireAgent, async (req, res) => {
     try {
         const { status } = req.query; 
         const filter = status ? { status } : {};
-        const tickets = await Chat.find(filter).sort({ updatedAt: -1 });
+        const tickets = await Chat.find(filter).sort({ lastMessageAt: -1, updatedAt: -1 });
 
-        const missingTimestampTickets = tickets.filter(chat => !chat.lastMessageAt);
-        if (missingTimestampTickets.length) {
+        if (tickets.length) {
             const latestMessages = await Message.aggregate([
-                { $match: { ticketId: { $in: missingTimestampTickets.map(chat => chat._id) }, isInternalEvent: { $ne: true } } },
+                { $match: { ticketId: { $in: tickets.map(chat => chat._id) }, $or: [{ isInternalEvent: { $ne: true } }, { internalAction: /^call_/ }] } },
                 { $sort: { timestamp: -1 } },
-                { $group: { _id: '$ticketId', lastMessageAt: { $first: '$timestamp' } } }
+                { $group: { _id: '$ticketId', lastMessageAt: { $first: '$timestamp' }, lastMessage: { $first: '$body' } } }
             ]);
-            const timestamps = new Map(latestMessages.map(item => [item._id.toString(), item.lastMessageAt]));
+            const latestByChat = new Map(latestMessages.map(item => [item._id.toString(), item]));
             const updates = [];
-            for (const chat of missingTimestampTickets) {
-                const lastMessageAt = timestamps.get(chat._id.toString());
-                if (!lastMessageAt) continue;
-                chat.lastMessageAt = lastMessageAt;
-                updates.push({ updateOne: { filter: { _id: chat._id }, update: { $set: { lastMessageAt } } } });
+            for (const chat of tickets) {
+                const latest = latestByChat.get(chat._id.toString());
+                if (!latest?.lastMessageAt) continue;
+                const timestampChanged = new Date(chat.lastMessageAt || 0).getTime() !== new Date(latest.lastMessageAt).getTime();
+                const bodyChanged = chat.lastMessage !== latest.lastMessage;
+                chat.lastMessageAt = latest.lastMessageAt;
+                chat.lastMessage = latest.lastMessage;
+                if (timestampChanged || bodyChanged) updates.push({ updateOne: { filter: { _id: chat._id }, update: { $set: { lastMessageAt: latest.lastMessageAt, lastMessage: latest.lastMessage } } } });
             }
             if (updates.length) await Chat.bulkWrite(updates);
         }
@@ -398,6 +400,7 @@ router.get('/tickets', requireAgent, async (req, res) => {
             await chat.save();
         }));
 
+        tickets.sort((a, b) => new Date(b.lastMessageAt || b.updatedAt || 0) - new Date(a.lastMessageAt || a.updatedAt || 0));
         res.json({ success: true, data: tickets });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -426,7 +429,8 @@ router.get('/tickets/:ticketId/messages', requireAgent, async (req, res) => {
         }
         const descending = await Message.find(filter).sort({ timestamp: -1 }).limit(limit + 1);
         const hasMore = descending.length > limit;
-        const messages = await whatsappService.resolveStoredMentions(descending.slice(0, limit).reverse());
+        const hydratedMessages = await whatsappService.resolveStoredMentions(descending.slice(0, limit).reverse());
+        const messages = whatsappService.dedupeCallEvents(hydratedMessages);
         res.json({ success: true, data: messages, meta: { hasMore, limit } });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });

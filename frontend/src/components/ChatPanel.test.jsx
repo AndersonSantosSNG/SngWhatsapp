@@ -6,6 +6,19 @@ const chat = { _id: 't1', phoneNumber: '5511999999999', whatsappId: '55119999999
 const baseProps = { chat, unreadMarker: null, contactOnline: false, hasOlderMessages: false, onLoadOlder: vi.fn(), onFile: vi.fn(), onToggle: vi.fn(), onClose: vi.fn(), onBack: vi.fn(), onOpenImage: vi.fn() };
 
 describe('ChatPanel', () => {
+  it('separa mensagens por dia com rótulos relativos', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 16, 15, 0));
+    const messages = [
+      { _id: 'yesterday', sender: 'client', body: 'Anterior', timestamp: new Date(2026, 8, 15, 18, 0) },
+      { _id: 'today', sender: 'client', body: 'Atual', timestamp: new Date(2026, 8, 16, 14, 0) }
+    ];
+    render(<ChatPanel {...baseProps} messages={messages} onSend={vi.fn()} />);
+    expect(screen.getByText('Ontem')).toBeVisible();
+    expect(screen.getByText('Hoje')).toBeVisible();
+    vi.useRealTimers();
+  });
+
   it('envia texto e bloqueia o campo durante a requisição', async () => {
     let resolveSend;
     const onSend = vi.fn(() => new Promise(resolve => { resolveSend = resolve; }));

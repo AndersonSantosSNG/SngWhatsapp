@@ -12,7 +12,7 @@ const MessageSchema = new mongoose.Schema({
     quotedBody: { type: String, default: '' },
     quotedSenderName: { type: String, default: '' },
     isInternalEvent: { type: Boolean, default: false },
-    internalAction: { type: String, enum: ['', 'claimed', 'unclaimed', 'closed', 'glpi_created', 'call_received'], default: '' },
+    internalAction: { type: String, enum: ['', 'claimed', 'unclaimed', 'closed', 'glpi_created', 'call_received', 'call_made', 'call_missed', 'call_rejected'], default: '' },
     internalActorName: { type: String, default: '' },
     glpiTicketId: { type: String, default: '' },
     glpiTicketUrl: { type: String, default: '' },

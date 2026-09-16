@@ -20,6 +20,7 @@ let isClientReady = false;
 let currentQrCode = null;
 const recentMessages = new Map();
 const pendingMessageAcks = new Map();
+const recentCallEvents = new Map();
 const mediaDirectory = path.join(__dirname, '..', '..', '..', 'storage', 'media');
 const pendingOutgoingMedia = [];
 const historySyncDays = Math.max(1, Number.parseInt(process.env.HISTORY_SYNC_DAYS || '30', 10));
@@ -28,6 +29,7 @@ const historySyncMedia = process.env.HISTORY_SYNC_MEDIA !== 'false';
 const MESSAGE_EDIT_WINDOW_MS = 15 * 60 * 1000;
 const MESSAGE_REVOKE_WINDOW_MS = 60 * 60 * 60 * 1000;
 let historySyncPromise = null;
+let callPollTimer = null;
 
 function isWithinMessageWindow(message, windowMs) {
     const sentAt = new Date(message.timestamp || message.createdAt || 0).getTime();
@@ -184,6 +186,60 @@ function mergeMessageAck(previousAck, nextAck) {
     return Math.max(previousAck ?? 0, nextAck ?? 0);
 }
 
+function getCallEventDetails(call) {
+    const fromMe = Boolean(call.fromMe ?? call.outgoing);
+    const isVideo = Boolean(call.isVideo ?? call.isVideoCall);
+    const outcome = String(call.outcome || call.callOutcome || call.callStatus || call.subtype || '').toLowerCase();
+    const duration = Number(call.duration || call.callDuration || 0);
+    const callKind = isVideo ? 'vídeo' : 'voz';
+    const rejected = /reject|declin|refus|deny/.test(outcome);
+    const missed = /miss|timeout|no.?answer|unanswered/.test(outcome);
+    const answered = duration > 0 || /accept|connect|answer|complete/.test(outcome);
+    let internalAction;
+    let body;
+
+    if (rejected) {
+        internalAction = 'call_rejected';
+        body = `Chamada de ${callKind} negada`;
+    } else if (!fromMe && (missed || (call.isFinal && !answered))) {
+        internalAction = 'call_missed';
+        body = `Chamada de ${callKind} perdida`;
+    } else if (fromMe) {
+        internalAction = 'call_made';
+        body = `Chamada de ${callKind} realizada`;
+    } else {
+        internalAction = 'call_received';
+        body = `Chamada de ${callKind} recebida`;
+    }
+    if (duration > 0) body += ` (${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, '0')})`;
+    return { fromMe, internalAction, body };
+}
+
+function isCallLogMessage(message) {
+    return message?.type === 'call_log' || message?._data?.type === 'call_log';
+}
+
+function getStoredHistoryMessageId(message) {
+    const id = getWhatsAppMessageId(message);
+    return id && isCallLogMessage(message) ? `call-log:${id}` : id;
+}
+
+function getCallSignature(peerId, body, timestamp) {
+    const timeBucket = Math.floor(new Date(timestamp).getTime() / 5000);
+    return `${peerId || ''}|${body || ''}|${timeBucket}`;
+}
+
+function dedupeCallEvents(messages) {
+    const seen = new Set();
+    return messages.filter(message => {
+        if (!message.isInternalEvent || !String(message.internalAction || '').startsWith('call_')) return true;
+        const signature = getCallSignature(message.ticketId, message.body, message.timestamp || message.createdAt);
+        if (seen.has(signature)) return false;
+        seen.add(signature);
+        return true;
+    });
+}
+
 async function getProfilePicUrl(contactId) {
     if (!client || !contactId) return '';
 
@@ -333,7 +389,7 @@ async function fetchMessagesForHistory(chatId, cutoff) {
         const chat = chats.find(item => (item.id?._serialized || item.id?.$1) === id);
         if (!chat?.msgs) return [];
 
-        const validMessage = message => !message.isNotification && Number(message.t) >= cutoffSeconds;
+        const validMessage = message => (message.type === 'call_log' || !message.isNotification) && Number(message.t) >= cutoffSeconds;
         let messages = chat.msgs.getModelsArray();
         let previousOldest = 0;
 
@@ -370,6 +426,9 @@ async function fetchMessagesForHistory(chatId, cutoff) {
                 mentionedIds: (message.mentionedJidList || []).map(serializeWid),
                 hasMedia: Boolean(message.mediaData || message.type === 'image' || message.type === 'video' || message.type === 'audio' || message.type === 'document' || message.type === 'ptt' || message.type === 'sticker'),
                 type: message.type || '',
+                isVideoCall: Boolean(message.isVideoCall || message.isVideo),
+                callOutcome: message.callOutcome || message.callStatus || message.subtype || '',
+                callDuration: Number(message.callDuration || message.duration || 0),
                 mediaKey: message.mediaKey || message.mediaData?.mediaKey || '',
                 timestamp: Number(message.t),
                 ack: Number(message.ack),
@@ -383,6 +442,9 @@ async function fetchMessagesForHistory(chatId, cutoff) {
                     mediaKey: message.mediaKey || message.mediaData?.mediaKey || '',
                     mediaKeyTimestamp: message.mediaKeyTimestamp || message.mediaData?.mediaKeyTimestamp,
                     type: message.type || '',
+                    isVideoCall: Boolean(message.isVideoCall || message.isVideo),
+                    callOutcome: message.callOutcome || message.callStatus || message.subtype || '',
+                    callDuration: Number(message.callDuration || message.duration || 0),
                     mimetype: message.mimetype || message.mediaData?.mimetype || '',
                     filename: message.filename || message.mediaData?.filename || '',
                     size: message.size || message.mediaData?.size
@@ -413,6 +475,7 @@ async function syncRecentMessages() {
         const cutoff = Date.now() - historySyncDays * 24 * 60 * 60 * 1000;
         const chats = await getChatsForHistory();
         let imported = 0;
+        let importedCalls = 0;
         let downloadedMedia = 0;
         const participantNames = new Map();
 
@@ -441,7 +504,9 @@ async function syncRecentMessages() {
                     } catch (err) {}
                 }
                 const latest = recent[recent.length - 1];
-                const latestBody = latest.body || (latest.hasMedia ? '[Mídia/Arquivo]' : '');
+                const latestBody = isCallLogMessage(latest)
+                    ? getCallEventDetails({ ...latest._data, ...latest, isFinal: true }).body
+                    : latest.body || (latest.hasMedia ? '[Mídia/Arquivo]' : '');
                 const latestDate = new Date(Number(latest.timestamp) * 1000);
 
                 if (!storedChat) {
@@ -474,7 +539,7 @@ async function syncRecentMessages() {
                     if (changed) await storedChat.save();
                 }
 
-                const ids = recent.map(getWhatsAppMessageId).filter(Boolean);
+                const ids = recent.map(getStoredHistoryMessageId).filter(Boolean);
                 const existing = await Message.find({ whatsappMessageId: { $in: ids } }).select('_id whatsappMessageId hasMedia').lean();
                 const existingById = new Map(existing.map(item => [item.whatsappMessageId, item]));
                 const legacyMessages = await Message.find({
@@ -482,15 +547,23 @@ async function syncRecentMessages() {
                     whatsappMessageId: '',
                     timestamp: { $gte: new Date(cutoff) }
                 }).select('_id sender body timestamp').lean();
+                const storedCalls = await Message.find({
+                    ticketId: storedChat._id,
+                    isInternalEvent: true,
+                    internalAction: { $in: ['call_received', 'call_made', 'call_missed', 'call_rejected'] },
+                    timestamp: { $gte: new Date(cutoff) }
+                }).select('body timestamp').lean();
+                const seenCallSignatures = new Set(storedCalls.map(item => getCallSignature(storedChat._id, item.body, item.timestamp)));
                 const documents = [];
                 const legacyUpdates = [];
 
                 for (const msg of recent) {
-                    const whatsappMessageId = getWhatsAppMessageId(msg);
+                    const whatsappMessageId = getStoredHistoryMessageId(msg);
                     if (!whatsappMessageId) continue;
 
                     const storedMessage = existingById.get(whatsappMessageId);
                     if (storedMessage) {
+                        if (isCallLogMessage(msg)) continue;
                         const correctedBody = await displayMessageText(msg, client);
                         if (correctedBody && storedMessage.body !== correctedBody) await Message.updateOne({ _id: storedMessage._id }, { $set: { body: correctedBody } });
                         if (msg.hasMedia && !storedMessage.hasMedia) {
@@ -503,10 +576,18 @@ async function syncRecentMessages() {
                         continue;
                     }
 
+                    const callEvent = isCallLogMessage(msg)
+                        ? getCallEventDetails({ ...msg._data, ...msg, isFinal: true })
+                        : null;
                     const sender = msg.fromMe ? 'agent' : 'client';
-                    const body = await displayMessageText(msg, client);
+                    const body = callEvent?.body || await displayMessageText(msg, client);
                     const timestamp = new Date(Number(msg.timestamp) * 1000);
-                    const mediaInfo = await saveHistoricalMessageMedia(msg);
+                    if (callEvent) {
+                        const callSignature = getCallSignature(storedChat._id, body, timestamp);
+                        if (seenCallSignatures.has(callSignature)) continue;
+                        seenCallSignatures.add(callSignature);
+                    }
+                    const mediaInfo = callEvent ? null : await saveHistoricalMessageMedia(msg);
                     if (mediaInfo) downloadedMedia += 1;
                     const legacyIndex = legacyMessages.findIndex(item =>
                         item.sender === sender
@@ -548,6 +629,7 @@ async function syncRecentMessages() {
                         groupSenderId,
                         groupSenderName,
                         body,
+                        ...(callEvent ? { isInternalEvent: true, internalAction: callEvent.internalAction } : {}),
                         ack: Number.isInteger(msg.ack) ? msg.ack : 0,
                         timestamp,
                         ...(mediaInfo || {})
@@ -558,15 +640,16 @@ async function syncRecentMessages() {
                 if (documents.length) {
                     await Message.insertMany(documents, { ordered: false });
                     imported += documents.length;
+                    importedCalls += documents.filter(document => document.internalAction?.startsWith('call_')).length;
                 }
             } catch (err) {
                 console.warn(`[HISTORICO] Falha ao sincronizar ${chatId}: ${err.message || err}`);
             }
         }
 
-        console.log(`[HISTORICO] Sincronizacao concluida: ${imported} mensagens e ${downloadedMedia} midias importadas.`);
-        if (ioInstance) ioInstance.emit('history_sync_complete', { imported, downloadedMedia });
-        return { imported, downloadedMedia };
+        console.log(`[HISTORICO] Sincronizacao concluida: ${imported} registros (${importedCalls} chamadas) e ${downloadedMedia} midias importadas.`);
+        if (ioInstance) ioInstance.emit('history_sync_complete', { imported, importedCalls, downloadedMedia, limitPerChat: historySyncLimit });
+        return { imported, importedCalls, downloadedMedia, limitPerChat: historySyncLimit };
     })().finally(() => { historySyncPromise = null; });
 
     return historySyncPromise;
@@ -706,6 +789,43 @@ function initWhatsApp(io) {
         isClientReady = true;
         currentQrCode = null;
         console.log('🚀 Cliente WhatsApp Pronto para Uso!');
+        setTimeout(async () => {
+            try {
+                const result = await client.pupPage.evaluate(() => {
+                    const collection = window.require('WAWebCallCollection');
+                    const serializeCall = value => ({
+                        id: value.id,
+                        peerJid: value.peerJid,
+                        isVideo: value.isVideo,
+                        isGroup: value.isGroup,
+                        outgoing: value.outgoing,
+                        offerTime: value.offerTime
+                    });
+                    let eventCaptureInstalled = false;
+                    if (collection && typeof collection.on === 'function' && !collection.__sngCallEventsInstalled) {
+                        const forwardCall = value => window.onIncomingCall(serializeCall(value));
+                        collection.on('add', forwardCall);
+                        collection.on('change', forwardCall);
+                        collection.__sngCallEventsInstalled = true;
+                        eventCaptureInstalled = true;
+                    }
+                    const mapKey = Object.keys(collection).find(key => collection[key] instanceof Map);
+                    const callMap = mapKey ? collection[mapKey] : null;
+                    if (!callMap) return 'collection-unavailable';
+                    if (callMap.__sngCallCaptureInstalled) return eventCaptureInstalled ? 'events-and-map-already-installed' : 'already-installed';
+                    const originalSet = callMap.set.bind(callMap);
+                    callMap.set = function(key, value) {
+                        window.onIncomingCall(serializeCall(value));
+                        return originalSet(key, value);
+                    };
+                    callMap.__sngCallCaptureInstalled = true;
+                    return eventCaptureInstalled ? 'events-and-map-installed' : 'map-installed';
+                });
+                console.log(`[WHATSAPP] Captura interna de chamadas: ${result}`);
+            } catch (err) {
+                console.warn(`[WHATSAPP] Não foi possível instalar captura interna: ${err.message || err}`);
+            }
+        }, 3000);
         // O evento ready pode ocorrer antes de o cache de chats terminar de
         // carregar. Dar esse tempo evita o erro minificado "r" do WhatsApp.
         setTimeout(() => {
@@ -719,13 +839,21 @@ function initWhatsApp(io) {
         isClientReady = false;
     });
 
-    client.on('call', async call => {
-        const whatsappId = String(call.from || '');
-        if (!whatsappId || call.fromMe) return;
+    const handleIncomingCall = async call => {
+        const whatsappId = String(call.from || call.peerJid || '');
+        console.log(`[WHATSAPP] Chamada recebida de ${whatsappId || 'origem desconhecida'}`);
+        if (!whatsappId) return;
 
         try {
-            const callId = String(call.id || '');
+            const callId = call.id ? `${call.isFinal ? 'call-log' : 'call'}:${String(call.id)}` : '';
             if (callId && await Message.exists({ whatsappMessageId: callId })) return;
+            const fromMe = Boolean(call.fromMe ?? call.outgoing);
+            const callDate = new Date((Number(call.timestamp || call.offerTime) || Date.now() / 1000) * 1000);
+            const { internalAction, body } = getCallEventDetails(call);
+            const callSignature = getCallSignature(whatsappId, body, callDate);
+            if (recentCallEvents.has(callSignature)) return;
+            recentCallEvents.set(callSignature, Date.now());
+            setTimeout(() => recentCallEvents.delete(callSignature), 10 * 60 * 1000);
 
             const isGroup = Boolean(call.isGroup || whatsappId.endsWith('@g.us'));
             let contactName = isGroup ? 'Grupo' : '';
@@ -747,10 +875,13 @@ function initWhatsApp(io) {
             } catch (err) {}
 
             let chat = await Chat.findOne({ $or: [{ whatsappId }, { phoneNumber }] });
-            const callDate = new Date((Number(call.timestamp) || Date.now() / 1000) * 1000);
-            const callKind = call.isVideo ? 'vídeo' : 'voz';
-            const body = `Chamada de ${callKind} recebida — não atendida neste atendimento`;
-
+            if (chat && await Message.exists({
+                ticketId: chat._id,
+                isInternalEvent: true,
+                internalAction,
+                body,
+                timestamp: { $gte: new Date(callDate.getTime() - 5000), $lte: new Date(callDate.getTime() + 5000) }
+            })) return;
             if (!chat) {
                 chat = await Chat.create({
                     phoneNumber,
@@ -778,33 +909,93 @@ function initWhatsApp(io) {
                 ticketId: chat._id,
                 phoneNumber: chat.phoneNumber,
                 whatsappMessageId: callId,
-                sender: 'client',
+                sender: fromMe ? 'agent' : 'client',
                 isInternalEvent: true,
-                internalAction: 'call_received',
+                internalAction,
                 body,
                 timestamp: callDate
             });
             const message = {
                 id: savedCall._id.toString(),
                 ticketId: chat._id.toString(),
-                sender: 'client',
+                sender: fromMe ? 'agent' : 'client',
                 body,
                 isInternalEvent: true,
-                internalAction: 'call_received',
+                internalAction,
                 timestamp: savedCall.timestamp,
-                fromMe: false
+                fromMe
             };
 
             if (ioInstance) ioInstance.emit('new_message', { chat, message });
+            console.log(`[WHATSAPP] Chamada registrada na conversa ${chat._id}`);
         } catch (err) {
-            console.error('Erro ao registrar chamada recebida:', err.message || err);
+            console.error('Erro ao registrar chamada recebida:', err?.stack || err?.message || err);
         }
+    };
+
+    client.on('call', handleIncomingCall);
+    client.on('message_create', async msg => {
+        if (msg.type !== 'call_log' && msg._data?.type !== 'call_log') return;
+        if (!msg.fromMe) return;
+        await handleIncomingCall({
+            id: getWhatsAppMessageId(msg),
+            peerJid: msg.fromMe ? msg.to : msg.from,
+            fromMe: Boolean(msg.fromMe),
+            isVideo: Boolean(msg._data?.isVideoCall || msg._data?.isVideo),
+            isGroup: Boolean(msg.from?.endsWith('@g.us') || msg.to?.endsWith('@g.us')),
+            timestamp: msg.timestamp,
+            outcome: msg._data?.callOutcome || msg._data?.callStatus || msg._data?.subtype,
+            duration: msg._data?.callDuration || msg.duration,
+            isFinal: true
+        });
     });
+
+    const pollCalls = async () => {
+        if (!isClientReady || !client?.pupPage) return;
+        try {
+            const calls = await client.pupPage.evaluate(() => {
+                const collection = window.require('WAWebCallCollection');
+                const mapKey = Object.keys(collection).find(key => collection[key] instanceof Map);
+                const callMap = mapKey ? collection[mapKey] : null;
+                return callMap ? [...callMap.values()].map(call => ({
+                    id: call.id,
+                    peerJid: call.peerJid,
+                    isVideo: call.isVideo,
+                    isGroup: call.isGroup,
+                    outgoing: call.outgoing,
+                    offerTime: call.offerTime
+                })) : [];
+            });
+            for (const call of calls) {
+                const timestamp = Number(call.offerTime || 0) * 1000;
+                if (timestamp && Date.now() - timestamp > 10 * 60 * 1000) continue;
+                await handleIncomingCall(call);
+            }
+        } catch (err) {
+            console.warn(`[WHATSAPP] Falha ao consultar chamadas: ${err.message || err}`);
+        }
+    };
+    callPollTimer = setInterval(pollCalls, 2000);
 
     client.on('message', async (msg) => {
         if (msg.isStatus || msg.from === 'status@broadcast' || msg.to === 'status@broadcast') return;
 
         try {
+            if (msg.type === 'call_log' || msg._data?.type === 'call_log') {
+                await handleIncomingCall({
+                    id: getWhatsAppMessageId(msg),
+                    peerJid: msg.fromMe ? msg.to : msg.from,
+                    fromMe: Boolean(msg.fromMe),
+                    isVideo: Boolean(msg._data?.isVideoCall || msg._data?.isVideo),
+                    isGroup: Boolean(msg.from?.endsWith('@g.us') || msg.to?.endsWith('@g.us')),
+                    timestamp: msg.timestamp,
+                    outcome: msg._data?.callOutcome || msg._data?.callStatus || msg._data?.subtype,
+                    duration: msg._data?.callDuration || msg.duration,
+                    isFinal: true
+                });
+                return;
+            }
+
             let senderName = '';
             let identifier = '';
             let profilePicUrl = '';
@@ -984,6 +1175,7 @@ function initWhatsApp(io) {
     });
 
     client.on('message_create', async (msg) => {
+        if (msg.type === 'call_log' || msg._data?.type === 'call_log') return;
         if (!msg.fromMe || msg.from === 'status@broadcast') return;
 
         try {
@@ -1618,6 +1810,10 @@ async function getContactMetadata(number) {
 }
 
 function destroyClient() {
+    if (callPollTimer) {
+        clearInterval(callPollTimer);
+        callPollTimer = null;
+    }
     if (client) return client.destroy();
     return Promise.resolve();
 }
@@ -1698,6 +1894,7 @@ async function recordGlpiTicketEvent(chat, agent, glpiTicketId, glpiTicketUrl) {
 module.exports = {
     getGroupMembers,
     resolveStoredMentions: messages => hydrateStoredMentions(messages, isClientReady ? client : null),
+    dedupeCallEvents,
     initWhatsApp,
     sendMessage,
     editMessage,

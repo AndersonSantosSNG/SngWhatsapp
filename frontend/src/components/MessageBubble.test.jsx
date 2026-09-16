@@ -41,6 +41,30 @@ describe('MessageBubble', () => {
       timestamp: '2026-09-16T13:25:00.000Z'
     }} />);
     expect(screen.getByText(/Chamada de voz recebida/)).toBeVisible();
+    expect(document.querySelector('.fa-arrow-down')).toBeInTheDocument();
+    expect(screen.getByText('Contato')).toBeVisible();
+  });
+  it('exibe chamada negada como evento no chat', () => {
+    render(<MessageBubble message={{
+      sender: 'client',
+      isInternalEvent: true,
+      internalAction: 'call_rejected',
+      body: 'Chamada de vídeo negada',
+      timestamp: '2026-09-16T13:30:00.000Z'
+    }} />);
+    expect(screen.getByText(/Chamada de vídeo negada/)).toBeVisible();
     expect(document.querySelector('.fa-phone-slash')).toBeInTheDocument();
+  });
+  it('identifica uma chamada feita pelo atendimento', () => {
+    render(<MessageBubble message={{
+      sender: 'agent',
+      fromMe: true,
+      isInternalEvent: true,
+      internalAction: 'call_made',
+      body: 'Chamada de voz realizada',
+      timestamp: '2026-09-16T13:35:00.000Z'
+    }} />);
+    expect(screen.getByText('Você')).toBeVisible();
+    expect(document.querySelector('.fa-arrow-up')).toBeInTheDocument();
   });
 });
