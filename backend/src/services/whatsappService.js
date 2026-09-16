@@ -247,10 +247,23 @@ async function getProfilePicture(identifier, isGroup = false, cachedUrl = '') {
 }
 
 function getChatDisplayName(chat, fallback = '') {
-    return chat?.name
+    return chat?.groupMetadata?.subject
+        || chat?.name
         || chat?.formattedTitle
-        || chat?.groupMetadata?.subject
+        || chat?.contactName
+        || chat?.contact?.name
+        || chat?.contact?.verifiedName
+        || chat?.contact?.pushname
+        || chat?.notifyName
         || fallback;
+}
+
+function shouldRefreshChatName(currentName, phoneNumber) {
+    const name = String(currentName || '').trim();
+    if (!name) return true;
+    const normalizedName = name.replace(/\D/g, '');
+    const normalizedPhone = String(phoneNumber || '').replace(/\D/g, '');
+    return Boolean(normalizedPhone && normalizedName === normalizedPhone);
 }
 
 async function getQuotedContext(msg) {
@@ -302,7 +315,7 @@ async function getChatsForHistory() {
                 return {
                     id: { _serialized: serialized, user: chat.id?.user || '' },
                     phoneNumber,
-                    name: chat.formattedTitle || chat.name || chat.groupMetadata?.subject || '',
+                    name: chat.groupMetadata?.subject || chat.formattedTitle || chat.name || chat.contactName || chat.contact?.name || chat.contact?.verifiedName || chat.contact?.pushname || chat.notifyName || '',
                     formattedTitle: chat.formattedTitle || '',
                     isGroup: Boolean(chat.isGroup || serialized.endsWith('@g.us'))
                 };
@@ -418,6 +431,7 @@ async function syncRecentMessages() {
                 if (!recent.length) continue;
 
                 let storedChat = await Chat.findOne({ $or: [{ phoneNumber: identifier }, { whatsappId: chatId }] });
+                const displayName = getChatDisplayName(chat, identifier);
                 const latest = recent[recent.length - 1];
                 const latestBody = latest.body || (latest.hasMedia ? '[Mídia/Arquivo]' : '');
                 const latestDate = new Date(Number(latest.timestamp) * 1000);
@@ -426,19 +440,30 @@ async function syncRecentMessages() {
                     storedChat = await Chat.create({
                         phoneNumber: identifier,
                         whatsappId: chatId,
-                        contactName: getChatDisplayName(chat, identifier),
+                        contactName: displayName,
                         isGroup,
                         status: 'pending',
                         lastMessage: latestBody,
                         lastMessageAt: latestDate,
                         updatedAt: latestDate
                     });
-                } else if (!storedChat.lastMessageAt || latestDate > new Date(storedChat.lastMessageAt)) {
-                    storedChat.lastMessage = latestBody;
-                    storedChat.lastMessageAt = latestDate;
-                    storedChat.updatedAt = latestDate;
-                    storedChat.whatsappId = storedChat.whatsappId || chatId;
-                    await storedChat.save();
+                } else {
+                    let changed = false;
+                    if (!storedChat.lastMessageAt || latestDate > new Date(storedChat.lastMessageAt)) {
+                        storedChat.lastMessage = latestBody;
+                        storedChat.lastMessageAt = latestDate;
+                        storedChat.updatedAt = latestDate;
+                        changed = true;
+                    }
+                    if (storedChat.whatsappId !== chatId) {
+                        storedChat.whatsappId = storedChat.whatsappId || chatId;
+                        changed = true;
+                    }
+                    if (displayName && shouldRefreshChatName(storedChat.contactName, identifier) && !/^\d+$/.test(displayName.replace(/\D/g, ''))) {
+                        storedChat.contactName = displayName;
+                        changed = true;
+                    }
+                    if (changed) await storedChat.save();
                 }
 
                 const ids = recent.map(getWhatsAppMessageId).filter(Boolean);
@@ -593,9 +618,11 @@ async function getChatMetadata(chatId) {
 
                 if (!chat) return null;
 
+                const collections = window.require('WAWebCollections');
+                const groupMetadata = chat.groupMetadata || collections.GroupMetadata?.get(wid);
                 return {
                     id: chat.id?._serialized || chat.id?.$1 || id,
-                    name: chat.formattedTitle || chat.name || chat.groupMetadata?.subject || '',
+                    name: groupMetadata?.subject || chat.formattedTitle || chat.name || '',
                     isGroup: Boolean(chat.isGroup || id.includes('@g.us'))
                 };
             } catch (err) {
