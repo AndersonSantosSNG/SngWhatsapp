@@ -2,7 +2,7 @@ import { useState } from 'react';
 import logo from '../assets/logo.png';
 
 const items = [
-  ['tickets', 'fa-comments', 'Atendimentos'],
+  ['chats', 'fa-comments', 'Atendimentos'],
   ['dashboard', 'fa-chart-line', 'Status & QR Code'],
   ['settings', 'fa-gear', 'Configurações']
 ];

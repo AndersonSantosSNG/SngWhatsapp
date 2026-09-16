@@ -7,7 +7,7 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 const Agent = require('../src/models/Agent');
 const AgentSession = require('../src/models/AgentSession');
 const AuditLog = require('../src/models/AuditLog');
-const Ticket = require('../src/models/Ticket');
+const Chat = require('../src/models/Chat');
 const Message = require('../src/models/Message');
 const apiRoutes = require('../src/routes/apiRoutes');
 
@@ -84,7 +84,7 @@ describe('atendimentos', () => {
     it('lista apenas mensagens das últimas 48 horas para seleção no GLPI', async () => {
         await createAgent('agent@sng.com.br');
         const { authorization } = await login('agent@sng.com.br');
-        const ticket = await Ticket.create({ phoneNumber: '5500000000001' });
+        const ticket = await Chat.create({ phoneNumber: '5500000000001' });
         await Message.create({ ticketId: ticket._id, phoneNumber: ticket.phoneNumber, sender: 'client', body: 'Recente', timestamp: new Date() });
         await Message.create({ ticketId: ticket._id, phoneNumber: ticket.phoneNumber, sender: 'client', body: 'Antiga', timestamp: new Date(Date.now() - 49 * 60 * 60 * 1000) });
         await Message.create({ ticketId: ticket._id, phoneNumber: ticket.phoneNumber, sender: 'agent', body: 'Evento', isInternalEvent: true });
@@ -96,7 +96,7 @@ describe('atendimentos', () => {
     it('permite somente um vencedor ao assumir o mesmo ticket', async () => {
         await Promise.all([createAgent('a@sng.com.br'), createAgent('b@sng.com.br')]);
         const [{ authorization: first }, { authorization: second }] = await Promise.all([login('a@sng.com.br'), login('b@sng.com.br')]);
-        const ticket = await Ticket.create({ phoneNumber: '5511999999999', contactName: 'Cliente' });
+        const ticket = await Chat.create({ phoneNumber: '5511999999999', contactName: 'Cliente' });
         const results = await Promise.all([
             request(app).post('/api/tickets/claim').set('Authorization', first).send({ ticketId: ticket._id }),
             request(app).post('/api/tickets/claim').set('Authorization', second).send({ ticketId: ticket._id })
@@ -108,21 +108,21 @@ describe('atendimentos', () => {
     it('descarta ticket temporário vazio e preserva ticket com mensagem', async () => {
         await createAgent('agent@sng.com.br');
         const { authorization } = await login('agent@sng.com.br');
-        const empty = await Ticket.create({ phoneNumber: '5511111111111', isTemporary: true });
-        const used = await Ticket.create({ phoneNumber: '5522222222222', isTemporary: true });
+        const empty = await Chat.create({ phoneNumber: '5511111111111', isTemporary: true });
+        const used = await Chat.create({ phoneNumber: '5522222222222', isTemporary: true });
         await Message.create({ ticketId: used._id, phoneNumber: used.phoneNumber, sender: 'client', body: 'Olá' });
 
         const removed = await request(app).post('/api/tickets/discard-temporary').set('Authorization', authorization).send({ ticketId: empty._id });
         const preserved = await request(app).post('/api/tickets/discard-temporary').set('Authorization', authorization).send({ ticketId: used._id });
         expect(removed.body.discarded).toBe(true);
         expect(preserved.body.discarded).toBe(false);
-        expect((await Ticket.findById(used._id)).isTemporary).toBe(false);
+        expect((await Chat.findById(used._id)).isTemporary).toBe(false);
     });
 
     it('pagina mensagens em ordem cronológica sem duplicar o limite', async () => {
         await createAgent('agent@sng.com.br');
         const { authorization } = await login('agent@sng.com.br');
-        const ticket = await Ticket.create({ phoneNumber: '5533333333333' });
+        const ticket = await Chat.create({ phoneNumber: '5533333333333' });
         const base = Date.now() - 200000;
         await Message.insertMany(Array.from({ length: 125 }, (_, index) => ({
             ticketId: ticket._id,

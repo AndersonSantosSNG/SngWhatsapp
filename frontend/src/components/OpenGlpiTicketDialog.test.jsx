@@ -14,7 +14,7 @@ describe('OpenGlpiTicketDialog', () => {
       json: async () => ({ success: true, data: [{ _id: messageId, sender: 'client', body: 'Recente', hasMedia: true, attachmentAvailable: true, mediaFileName: 'erro.png', timestamp: new Date().toISOString() }] })
     });
     render(<OpenGlpiTicketDialog
-      ticket={{ _id: 'ticket-1', contactName: 'Cliente' }}
+      chat={{ _id: 'ticket-1', contactName: 'Cliente' }}
       onCreate={onCreate}
       onCancel={onCancel}
     />);

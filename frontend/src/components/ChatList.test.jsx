@@ -1,18 +1,18 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import TicketList from './TicketList';
+import ChatList from './ChatList';
 
-const tickets = [
+const chats = [
   { _id: '1', phoneNumber: '5511999999999', contactName: 'Ana', status: 'pending', lastMessage: 'Olá' },
   { _id: '2', phoneNumber: '5511888888888', contactName: 'Bruno', status: 'open', assignedAgent: 'agent-1', lastMessage: 'Teste' },
   { _id: '3', phoneNumber: '120363@g.us', whatsappId: '120363@g.us', contactName: 'Equipe', status: 'closed', isGroup: true }
 ];
 
-const props = { tickets, loading: false, activeId: '', agentId: 'agent-1', unreadByTicket: { 1: { count: 2 } }, onSelect: vi.fn(), reload: vi.fn(), onNewConversation: vi.fn(), theme: 'dark', setTheme: vi.fn() };
+const props = { chats, loading: false, activeId: '', agentId: 'agent-1', unreadByChat: { 1: { count: 2 } }, onSelect: vi.fn(), reload: vi.fn(), onNewConversation: vi.fn(), theme: 'dark', setTheme: vi.fn() };
 
-describe('TicketList', () => {
+describe('ChatList', () => {
   it('pesquisa e filtra atendimentos', () => {
-    render(<TicketList {...props} />);
+    render(<ChatList {...props} />);
     fireEvent.change(screen.getByLabelText('Pesquisar conversas'), { target: { value: 'Ana' } });
     expect(screen.getByText('Ana')).toBeVisible();
     expect(screen.queryByText('Bruno')).not.toBeInTheDocument();
@@ -24,7 +24,7 @@ describe('TicketList', () => {
 
   it('adiciona 55 ao número nacional mascarado', async () => {
     const onNewConversation = vi.fn().mockResolvedValue(undefined);
-    render(<TicketList {...props} onNewConversation={onNewConversation} />);
+    render(<ChatList {...props} onNewConversation={onNewConversation} />);
     fireEvent.click(screen.getByLabelText('Nova conversa'));
     const input = screen.getByLabelText('DDD + telefone');
     fireEvent.change(input, { target: { value: '11999999999' } });
@@ -35,7 +35,7 @@ describe('TicketList', () => {
 
   it('usa código informado para número internacional', async () => {
     const onNewConversation = vi.fn().mockResolvedValue(undefined);
-    render(<TicketList {...props} onNewConversation={onNewConversation} />);
+    render(<ChatList {...props} onNewConversation={onNewConversation} />);
     fireEvent.click(screen.getByLabelText('Nova conversa'));
     fireEvent.click(screen.getByLabelText('É número internacional?'));
     fireEvent.change(screen.getByLabelText('Código do país'), { target: { value: '1' } });

@@ -2,8 +2,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import ChatPanel from './ChatPanel';
 
-const ticket = { _id: 't1', phoneNumber: '5511999999999', whatsappId: '5511999999999@c.us', contactName: 'Cliente', status: 'pending' };
-const baseProps = { ticket, unreadMarker: null, contactOnline: false, hasOlderMessages: false, onLoadOlder: vi.fn(), onFile: vi.fn(), onToggle: vi.fn(), onClose: vi.fn(), onBack: vi.fn(), onOpenImage: vi.fn() };
+const chat = { _id: 't1', phoneNumber: '5511999999999', whatsappId: '5511999999999@c.us', contactName: 'Cliente', status: 'pending' };
+const baseProps = { chat, unreadMarker: null, contactOnline: false, hasOlderMessages: false, onLoadOlder: vi.fn(), onFile: vi.fn(), onToggle: vi.fn(), onClose: vi.fn(), onBack: vi.fn(), onOpenImage: vi.fn() };
 
 describe('ChatPanel', () => {
   it('envia texto e bloqueia o campo durante a requisição', async () => {
@@ -27,7 +27,7 @@ describe('ChatPanel', () => {
   });
 
   it('oculta comandos de envio em canal somente leitura', () => {
-    render(<ChatPanel {...baseProps} ticket={{ ...ticket, whatsappId: '123@newsletter' }} messages={[]} onSend={vi.fn()} />);
+    render(<ChatPanel {...baseProps} chat={{ ...chat, whatsappId: '123@newsletter' }} messages={[]} onSend={vi.fn()} />);
     expect(screen.getByText('Esta conversa não permite o envio de mensagens.')).toBeVisible();
     expect(screen.queryByPlaceholderText('Digite uma mensagem')).not.toBeInTheDocument();
   });

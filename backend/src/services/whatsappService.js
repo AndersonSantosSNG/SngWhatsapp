@@ -10,7 +10,7 @@ const { convertVoiceAudio } = require('./audioService');
 const { sendAudio } = require('./audioSendService');
 const { displayMessageText, hydrateStoredMentions } = require('./messageContent');
 
-const Ticket = require('../models/Ticket');
+const Chat = require('../models/Chat');
 const Message = require('../models/Message');
 const Agent = require('../models/Agent');
 
@@ -417,13 +417,13 @@ async function syncRecentMessages() {
                 const recent = await fetchMessagesForHistory(chatId, cutoff);
                 if (!recent.length) continue;
 
-                let ticket = await Ticket.findOne({ $or: [{ phoneNumber: identifier }, { whatsappId: chatId }] });
+                let storedChat = await Chat.findOne({ $or: [{ phoneNumber: identifier }, { whatsappId: chatId }] });
                 const latest = recent[recent.length - 1];
                 const latestBody = latest.body || (latest.hasMedia ? '[Mídia/Arquivo]' : '');
                 const latestDate = new Date(Number(latest.timestamp) * 1000);
 
-                if (!ticket) {
-                    ticket = await Ticket.create({
+                if (!storedChat) {
+                    storedChat = await Chat.create({
                         phoneNumber: identifier,
                         whatsappId: chatId,
                         contactName: getChatDisplayName(chat, identifier),
@@ -433,19 +433,19 @@ async function syncRecentMessages() {
                         lastMessageAt: latestDate,
                         updatedAt: latestDate
                     });
-                } else if (!ticket.lastMessageAt || latestDate > new Date(ticket.lastMessageAt)) {
-                    ticket.lastMessage = latestBody;
-                    ticket.lastMessageAt = latestDate;
-                    ticket.updatedAt = latestDate;
-                    ticket.whatsappId = ticket.whatsappId || chatId;
-                    await ticket.save();
+                } else if (!storedChat.lastMessageAt || latestDate > new Date(storedChat.lastMessageAt)) {
+                    storedChat.lastMessage = latestBody;
+                    storedChat.lastMessageAt = latestDate;
+                    storedChat.updatedAt = latestDate;
+                    storedChat.whatsappId = storedChat.whatsappId || chatId;
+                    await storedChat.save();
                 }
 
                 const ids = recent.map(getWhatsAppMessageId).filter(Boolean);
                 const existing = await Message.find({ whatsappMessageId: { $in: ids } }).select('_id whatsappMessageId hasMedia').lean();
                 const existingById = new Map(existing.map(item => [item.whatsappMessageId, item]));
                 const legacyMessages = await Message.find({
-                    ticketId: ticket._id,
+                    ticketId: storedChat._id,
                     whatsappMessageId: '',
                     timestamp: { $gte: new Date(cutoff) }
                 }).select('_id sender body timestamp').lean();
@@ -508,7 +508,7 @@ async function syncRecentMessages() {
                     }
 
                     documents.push({
-                        ticketId: ticket._id,
+                        ticketId: storedChat._id,
                         phoneNumber: identifier,
                         whatsappMessageId,
                         sender,
@@ -711,13 +711,13 @@ function initWhatsApp(io) {
                 profilePicUrl = await getProfilePicUrl(whatsappId) || '';
             } catch (err) {}
 
-            let ticket = await Ticket.findOne({ $or: [{ whatsappId }, { phoneNumber }] });
+            let chat = await Chat.findOne({ $or: [{ whatsappId }, { phoneNumber }] });
             const callDate = new Date((Number(call.timestamp) || Date.now() / 1000) * 1000);
             const callKind = call.isVideo ? 'vídeo' : 'voz';
             const body = `Chamada de ${callKind} recebida — não atendida neste atendimento`;
 
-            if (!ticket) {
-                ticket = await Ticket.create({
+            if (!chat) {
+                chat = await Chat.create({
                     phoneNumber,
                     whatsappId,
                     contactName: contactName || phoneNumber,
@@ -728,20 +728,20 @@ function initWhatsApp(io) {
                     lastMessageAt: callDate
                 });
             } else {
-                ticket.whatsappId = whatsappId || ticket.whatsappId;
-                ticket.lastMessage = body;
-                ticket.lastMessageAt = callDate;
-                ticket.isTemporary = false;
-                if (contactName) ticket.contactName = contactName;
-                if (profilePicUrl) ticket.profilePicUrl = profilePicUrl;
-                if (ticket.status === 'closed') ticket.status = 'pending';
-                ticket.updatedAt = Date.now();
-                await ticket.save();
+                chat.whatsappId = whatsappId || chat.whatsappId;
+                chat.lastMessage = body;
+                chat.lastMessageAt = callDate;
+                chat.isTemporary = false;
+                if (contactName) chat.contactName = contactName;
+                if (profilePicUrl) chat.profilePicUrl = profilePicUrl;
+                if (chat.status === 'closed') chat.status = 'pending';
+                chat.updatedAt = Date.now();
+                await chat.save();
             }
 
             const savedCall = await Message.create({
-                ticketId: ticket._id,
-                phoneNumber: ticket.phoneNumber,
+                ticketId: chat._id,
+                phoneNumber: chat.phoneNumber,
                 whatsappMessageId: callId,
                 sender: 'client',
                 isInternalEvent: true,
@@ -751,7 +751,7 @@ function initWhatsApp(io) {
             });
             const message = {
                 id: savedCall._id.toString(),
-                ticketId: ticket._id.toString(),
+                ticketId: chat._id.toString(),
                 sender: 'client',
                 body,
                 isInternalEvent: true,
@@ -760,7 +760,7 @@ function initWhatsApp(io) {
                 fromMe: false
             };
 
-            if (ioInstance) ioInstance.emit('new_message', { ticket, message });
+            if (ioInstance) ioInstance.emit('new_message', { chat, message });
         } catch (err) {
             console.error('Erro ao registrar chamada recebida:', err.message || err);
         }
@@ -877,9 +877,9 @@ function initWhatsApp(io) {
             const mediaInfo = await saveMessageMedia(msg);
             const quotedInfo = await getQuotedContext(msg);
 
-            let ticket = await Ticket.findOne({ phoneNumber: identifier });
-            if (!ticket) {
-                ticket = await Ticket.create({
+            let chat = await Chat.findOne({ phoneNumber: identifier });
+            if (!chat) {
+                chat = await Chat.create({
                     phoneNumber: identifier,
                     whatsappId,
                     contactName: senderName,
@@ -890,19 +890,19 @@ function initWhatsApp(io) {
                     lastMessageAt: messageDate
                 });
             } else {
-                ticket.lastMessage = bodyContent;
-                ticket.lastMessageAt = messageDate;
-                ticket.isTemporary = false;
-                ticket.whatsappId = whatsappId || ticket.whatsappId;
-                if (senderName) ticket.contactName = senderName;
-                if (profilePicUrl) ticket.profilePicUrl = profilePicUrl;
-                if (ticket.status === 'closed') ticket.status = 'pending';
-                ticket.updatedAt = Date.now();
-                await ticket.save();
+                chat.lastMessage = bodyContent;
+                chat.lastMessageAt = messageDate;
+                chat.isTemporary = false;
+                chat.whatsappId = whatsappId || chat.whatsappId;
+                if (senderName) chat.contactName = senderName;
+                if (profilePicUrl) chat.profilePicUrl = profilePicUrl;
+                if (chat.status === 'closed') chat.status = 'pending';
+                chat.updatedAt = Date.now();
+                await chat.save();
             }
 
             const savedDbMessage = await Message.create({
-                ticketId: ticket._id,
+                ticketId: chat._id,
                 phoneNumber: identifier,
                 whatsappMessageId: getWhatsAppMessageId(msg),
                 sender: 'client',
@@ -916,7 +916,7 @@ function initWhatsApp(io) {
             const msgData = {
                 id: savedDbMessage._id.toString(),
                 whatsappMessageId: savedDbMessage.whatsappMessageId,
-                ticketId: ticket._id.toString(),
+                ticketId: chat._id.toString(),
                 from: msg.from,
                 senderName: isGroupChat ? groupSenderName : (senderName || identifier),
                 groupSenderId,
@@ -939,7 +939,7 @@ function initWhatsApp(io) {
 
             if (ioInstance) {
                 ioInstance.emit('new_message', {
-                    ticket,
+                    chat,
                     message: msgData
                 });
             }
@@ -1013,9 +1013,9 @@ function initWhatsApp(io) {
             const mediaInfo = await takePendingOutgoingMedia(targetChatId) || await saveMessageMedia(msg);
             const quotedInfo = await getQuotedContext(msg);
 
-            let ticket = await Ticket.findOne({ phoneNumber: identifier });
-            if (!ticket) {
-                ticket = await Ticket.create({
+            let chat = await Chat.findOne({ phoneNumber: identifier });
+            if (!chat) {
+                chat = await Chat.create({
                     phoneNumber: identifier,
                     whatsappId,
                     contactName: chatName,
@@ -1026,23 +1026,23 @@ function initWhatsApp(io) {
                     lastMessageAt: messageDate
                 });
             } else {
-                ticket.lastMessage = bodyContent;
-                ticket.lastMessageAt = messageDate;
-                ticket.isTemporary = false;
-                ticket.whatsappId = whatsappId || ticket.whatsappId;
+                chat.lastMessage = bodyContent;
+                chat.lastMessageAt = messageDate;
+                chat.isTemporary = false;
+                chat.whatsappId = whatsappId || chat.whatsappId;
                 if (chatName && chatName !== identifier) {
-                    ticket.contactName = chatName;
+                    chat.contactName = chatName;
                 }
                 if (profilePicUrl) {
-                    ticket.profilePicUrl = profilePicUrl;
+                    chat.profilePicUrl = profilePicUrl;
                 }
-                ticket.updatedAt = Date.now();
-                await ticket.save();
+                chat.updatedAt = Date.now();
+                await chat.save();
             }
 
             // Evita criar duplicado exato no DB caso a mensagem já venha de message_create idêntica recente
             const existingMessage = await Message.findOne({
-                ticketId: ticket._id,
+                ticketId: chat._id,
                 body: bodyContent,
                 sender: 'agent',
                 createdAt: { $gte: new Date(Date.now() - 5000) }
@@ -1057,7 +1057,7 @@ function initWhatsApp(io) {
 
             if (!savedDbMessage) {
                 savedDbMessage = await Message.create({
-                    ticketId: ticket._id,
+                    ticketId: chat._id,
                     phoneNumber: identifier,
                     whatsappMessageId,
                     sender: 'agent',
@@ -1084,7 +1084,7 @@ function initWhatsApp(io) {
             const msgData = {
                 id: savedDbMessage._id.toString(),
                 whatsappMessageId: savedDbMessage.whatsappMessageId,
-                ticketId: ticket._id.toString(),
+                ticketId: chat._id.toString(),
                 from: targetChatId,
                 senderName: 'Você',
                 phoneNumber: identifier,
@@ -1103,7 +1103,7 @@ function initWhatsApp(io) {
 
             if (ioInstance) {
                 ioInstance.emit('new_message', {
-                    ticket,
+                    chat,
                     message: msgData
                 });
             }
@@ -1591,17 +1591,17 @@ function getStatus() {
     return { isClientReady, currentQrCode };
 }
 
-async function recordTicketEvent(ticket, agent, action) {
+async function recordChatEvent(chat, agent, action) {
     const actionLabels = {
         claimed: 'assumiu o atendimento',
         unclaimed: 'devolveu o atendimento',
         closed: 'encerrou o atendimento'
     };
-    if (!ticket || !agent || !actionLabels[action]) throw new Error('Evento interno invalido.');
+    if (!chat || !agent || !actionLabels[action]) throw new Error('Evento interno invalido.');
 
     const savedEvent = await Message.create({
-        ticketId: ticket._id,
-        phoneNumber: ticket.phoneNumber,
+        ticketId: chat._id,
+        phoneNumber: chat.phoneNumber,
         sender: 'agent',
         isInternalEvent: true,
         internalAction: action,
@@ -1612,8 +1612,8 @@ async function recordTicketEvent(ticket, agent, action) {
 
     const eventData = {
         id: savedEvent._id.toString(),
-        ticketId: ticket._id.toString(),
-        ticket: typeof ticket.toObject === 'function' ? ticket.toObject() : ticket,
+        ticketId: chat._id.toString(),
+        chat: typeof chat.toObject === 'function' ? chat.toObject() : chat,
         sender: 'agent',
         body: savedEvent.body,
         isInternalEvent: true,
@@ -1623,16 +1623,16 @@ async function recordTicketEvent(ticket, agent, action) {
         fromMe: true
     };
 
-    if (ioInstance) ioInstance.emit('ticket_event', eventData);
+    if (ioInstance) ioInstance.emit('chat_event', eventData);
     return eventData;
 }
 
-async function recordGlpiTicketEvent(ticket, agent, glpiTicketId, glpiTicketUrl) {
-    if (!ticket || !agent || !glpiTicketId) throw new Error('Dados do chamado GLPI inválidos.');
+async function recordGlpiTicketEvent(chat, agent, glpiTicketId, glpiTicketUrl) {
+    if (!chat || !agent || !glpiTicketId) throw new Error('Dados do chamado GLPI inválidos.');
     const body = `${agent.name} abriu um chamado ${glpiTicketId}`;
     const savedEvent = await Message.create({
-        ticketId: ticket._id,
-        phoneNumber: ticket.phoneNumber,
+        ticketId: chat._id,
+        phoneNumber: chat.phoneNumber,
         sender: 'agent',
         isInternalEvent: true,
         internalAction: 'glpi_created',
@@ -1644,8 +1644,8 @@ async function recordGlpiTicketEvent(ticket, agent, glpiTicketId, glpiTicketUrl)
     });
     const eventData = {
         id: savedEvent._id.toString(),
-        ticketId: ticket._id.toString(),
-        ticket: typeof ticket.toObject === 'function' ? ticket.toObject() : ticket,
+        ticketId: chat._id.toString(),
+        chat: typeof chat.toObject === 'function' ? chat.toObject() : chat,
         sender: 'agent',
         body,
         isInternalEvent: true,
@@ -1656,7 +1656,7 @@ async function recordGlpiTicketEvent(ticket, agent, glpiTicketId, glpiTicketUrl)
         timestamp: savedEvent.timestamp,
         fromMe: true
     };
-    if (ioInstance) ioInstance.emit('ticket_event', eventData);
+    if (ioInstance) ioInstance.emit('chat_event', eventData);
     return eventData;
 }
 
@@ -1673,7 +1673,7 @@ module.exports = {
     syncRecentMessages,
     getContactPresence,
     getContactMetadata,
-    recordTicketEvent,
+    recordChatEvent,
     recordGlpiTicketEvent,
     getProfilePicture,
     getChatMetadata

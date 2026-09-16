@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import CloseTicketDialog, { CLOSING_MESSAGE } from './CloseTicketDialog';
+import CloseChatDialog, { CLOSING_MESSAGE } from './CloseChatDialog';
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
@@ -9,13 +9,13 @@ beforeAll(() => {
 
 function setup(overrides = {}) {
   const props = { canSendMessages: true, onSend: vi.fn().mockResolvedValue({}), onClose: vi.fn().mockResolvedValue(true), onCancel: vi.fn(), ...overrides };
-  render(<CloseTicketDialog {...props} />);
+  render(<CloseChatDialog {...props} />);
   return props;
 }
 const confirm = () => fireEvent.click(screen.getByRole('button', { name: 'Confirmar encerramento' }));
 const selectMessage = () => fireEvent.click(screen.getByRole('checkbox'));
 
-describe('CloseTicketDialog', () => {
+describe('CloseChatDialog', () => {
   it('permite cancelar sem enviar ou encerrar', () => {
     const props = setup();
     fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }));

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 export const CLOSING_MESSAGE = 'Mensagem automática: Este atendimento foi encerrado. Caso precise de suporte para outra solicitação, basta abrir um novo chamado em https://atendimento.sng.com.br/ ou enviar uma mensagem por aqui. Agradecemos o seu contato e estamos à disposição!';
 
-export default function CloseTicketDialog({ canSendMessages, onSend, onClose, onCancel }) {
+export default function CloseChatDialog({ canSendMessages, onSend, onClose, onCancel }) {
   const dialog = useRef(null);
   const busy = useRef(false);
   const [sendMessage, setSendMessage] = useState(false);
@@ -37,16 +37,16 @@ export default function CloseTicketDialog({ canSendMessages, onSend, onClose, on
     }
   };
 
-  return <dialog ref={dialog} className="card close-ticket-dialog" aria-labelledby="close-ticket-title" onCancel={event => { event.preventDefault(); if (!busy.current) onCancel(); }}>
+  return <dialog ref={dialog} className="card close-chat-dialog" aria-labelledby="close-chat-title" onCancel={event => { event.preventDefault(); if (!busy.current) onCancel(); }}>
     <form onSubmit={confirm}>
-      <h2 id="close-ticket-title">Encerrar atendimento</h2>
+      <h2 id="close-chat-title">Encerrar atendimento</h2>
       <p>Deseja enviar uma mensagem de encerramento?</p>
       <blockquote>{CLOSING_MESSAGE}</blockquote>
-      <label className="close-ticket-option"><input type="checkbox" checked={sendMessage} disabled={closing || messageSent || !canSendMessages} onChange={event => setSendMessage(event.target.checked)} />Enviar mensagem de encerramento</label>
+      <label className="close-chat-option"><input type="checkbox" checked={sendMessage} disabled={closing || messageSent || !canSendMessages} onChange={event => setSendMessage(event.target.checked)} />Enviar mensagem de encerramento</label>
       {!canSendMessages && <p>Esta conversa não permite o envio de mensagens.</p>}
       {messageSent && <p role="status">Mensagem enviada. Falta concluir o encerramento.</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
-      <div className="close-ticket-actions"><button type="button" onClick={onCancel} disabled={closing}>Cancelar</button><button type="submit" className="submit-button" disabled={closing}>{closing ? 'Encerrando...' : 'Confirmar encerramento'}</button></div>
+      <div className="close-chat-actions"><button type="button" onClick={onCancel} disabled={closing}>Cancelar</button><button type="submit" className="submit-button" disabled={closing}>{closing ? 'Encerrando...' : 'Confirmar encerramento'}</button></div>
     </form>
   </dialog>;
 }

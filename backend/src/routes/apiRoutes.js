@@ -8,7 +8,7 @@ const whatsappService = require('../services/whatsappService');
 const glpiService = require('../services/glpiService');
 
 // Models do MongoDB
-const Ticket = require('../models/Ticket');
+const Chat = require('../models/Chat');
 const Message = require('../models/Message');
 const path = require('path');
 const crypto = require('crypto');
@@ -353,37 +353,37 @@ router.get('/tickets', requireAgent, async (req, res) => {
     try {
         const { status } = req.query; 
         const filter = status ? { status } : {};
-        const tickets = await Ticket.find(filter).sort({ updatedAt: -1 });
+        const tickets = await Chat.find(filter).sort({ updatedAt: -1 });
 
-        const missingTimestampTickets = tickets.filter(ticket => !ticket.lastMessageAt);
+        const missingTimestampTickets = tickets.filter(chat => !chat.lastMessageAt);
         if (missingTimestampTickets.length) {
             const latestMessages = await Message.aggregate([
-                { $match: { ticketId: { $in: missingTimestampTickets.map(ticket => ticket._id) }, isInternalEvent: { $ne: true } } },
+                { $match: { ticketId: { $in: missingTimestampTickets.map(chat => chat._id) }, isInternalEvent: { $ne: true } } },
                 { $sort: { timestamp: -1 } },
                 { $group: { _id: '$ticketId', lastMessageAt: { $first: '$timestamp' } } }
             ]);
             const timestamps = new Map(latestMessages.map(item => [item._id.toString(), item.lastMessageAt]));
             const updates = [];
-            for (const ticket of missingTimestampTickets) {
-                const lastMessageAt = timestamps.get(ticket._id.toString());
+            for (const chat of missingTimestampTickets) {
+                const lastMessageAt = timestamps.get(chat._id.toString());
                 if (!lastMessageAt) continue;
-                ticket.lastMessageAt = lastMessageAt;
-                updates.push({ updateOne: { filter: { _id: ticket._id }, update: { $set: { lastMessageAt } } } });
+                chat.lastMessageAt = lastMessageAt;
+                updates.push({ updateOne: { filter: { _id: chat._id }, update: { $set: { lastMessageAt } } } });
             }
-            if (updates.length) await Ticket.bulkWrite(updates);
+            if (updates.length) await Chat.bulkWrite(updates);
         }
 
         const genericGroupNames = new Set(['', 'Grupo', 'Grupo sem nome', 'Grupo do WhatsApp']);
-        await Promise.all(tickets.map(async (ticket) => {
-            const plainId = (ticket.phoneNumber || '').replace(/\D/g, '');
+        await Promise.all(tickets.map(async (chat) => {
+            const plainId = (chat.phoneNumber || '').replace(/\D/g, '');
             const looksLikeGroupId = plainId.startsWith('120363') && plainId.length >= 17;
-            const needsGroupRepair = ticket.isGroup
-                ? genericGroupNames.has((ticket.contactName || '').trim())
+            const needsGroupRepair = chat.isGroup
+                ? genericGroupNames.has((chat.contactName || '').trim())
                 : looksLikeGroupId;
 
             if (!needsGroupRepair) return;
 
-            const savedId = ticket.whatsappId || ticket.phoneNumber;
+            const savedId = chat.whatsappId || chat.phoneNumber;
             const groupId = savedId.includes('@g.us')
                 ? savedId
                 : `${plainId}@g.us`;
@@ -391,11 +391,11 @@ router.get('/tickets', requireAgent, async (req, res) => {
             const metadata = await whatsappService.getChatMetadata(groupId);
             if (!metadata?.name) return;
 
-            ticket.contactName = metadata.name;
-            ticket.whatsappId = metadata.id || groupId;
-            ticket.isGroup = true;
-            if (metadata.profilePicUrl) ticket.profilePicUrl = metadata.profilePicUrl;
-            await ticket.save();
+            chat.contactName = metadata.name;
+            chat.whatsappId = metadata.id || groupId;
+            chat.isGroup = true;
+            if (metadata.profilePicUrl) chat.profilePicUrl = metadata.profilePicUrl;
+            await chat.save();
         }));
 
         res.json({ success: true, data: tickets });
@@ -406,10 +406,10 @@ router.get('/tickets', requireAgent, async (req, res) => {
 
 router.get('/tickets/:ticketId/members', requireAgent, async (req, res) => {
     try {
-        const ticket = await Ticket.findById(req.params.ticketId);
-        if (!ticket) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
-        if (!ticket.isGroup) return res.status(400).json({ success: false, error: 'Esta conversa não é um grupo.' });
-        const data = await whatsappService.getGroupMembers(ticket.whatsappId || ticket.phoneNumber);
+        const chat = await Chat.findById(req.params.ticketId);
+        if (!chat) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
+        if (!chat.isGroup) return res.status(400).json({ success: false, error: 'Esta conversa não é um grupo.' });
+        const data = await whatsappService.getGroupMembers(chat.whatsappId || chat.phoneNumber);
         res.json({ success: true, data });
     } catch (err) {
         res.status(503).json({ success: false, error: err.message || 'Não foi possível carregar os membros.' });
@@ -441,7 +441,7 @@ router.post('/tickets/start', requireAgent, async (req, res) => {
         }
 
         const contact = await whatsappService.getContactMetadata(phoneNumber);
-        const ticket = await Ticket.findOneAndUpdate(
+        const chat = await Chat.findOneAndUpdate(
             { $or: [{ phoneNumber: contact.phoneNumber }, { whatsappId: contact.whatsappId }] },
             {
                 $setOnInsert: {
@@ -463,15 +463,15 @@ router.post('/tickets/start', requireAgent, async (req, res) => {
         );
 
         const hasMessages = await Message.exists({
-            ticketId: ticket._id,
+            ticketId: chat._id,
             isInternalEvent: { $ne: true }
         });
-        ticket.isTemporary = !hasMessages;
-        await ticket.save();
+        chat.isTemporary = !hasMessages;
+        await chat.save();
 
         res.json({
             success: true,
-            data: { ...ticket.toObject(), name: contact.name },
+            data: { ...chat.toObject(), name: contact.name },
             whatsappPayload: contact.rawPayload
         });
     } catch (err) {
@@ -481,17 +481,17 @@ router.post('/tickets/start', requireAgent, async (req, res) => {
 
 router.post('/tickets/discard-temporary', requireAgent, async (req, res) => {
     try {
-        const ticket = await Ticket.findOne({ _id: req.body?.ticketId, isTemporary: true });
-        if (!ticket) return res.json({ success: true, discarded: false });
+        const chat = await Chat.findOne({ _id: req.body?.ticketId, isTemporary: true });
+        if (!chat) return res.json({ success: true, discarded: false });
 
-        const hasMessages = await Message.exists({ ticketId: ticket._id, isInternalEvent: { $ne: true } });
+        const hasMessages = await Message.exists({ ticketId: chat._id, isInternalEvent: { $ne: true } });
         if (hasMessages) {
-            ticket.isTemporary = false;
-            await ticket.save();
+            chat.isTemporary = false;
+            await chat.save();
             return res.json({ success: true, discarded: false });
         }
 
-        await Ticket.deleteOne({ _id: ticket._id, isTemporary: true });
+        await Chat.deleteOne({ _id: chat._id, isTemporary: true });
         res.json({ success: true, discarded: true });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -557,15 +557,15 @@ router.delete('/messages/:messageId/everyone', requireAgent, async (req, res) =>
 
 router.get('/tickets/:ticketId/profile-picture', requireAgent, async (req, res) => {
     try {
-        const ticket = await Ticket.findById(req.params.ticketId);
-        if (!ticket) {
+        const chat = await Chat.findById(req.params.ticketId);
+        if (!chat) {
             return res.status(404).end();
         }
 
         const picture = await whatsappService.getProfilePicture(
-            ticket.whatsappId || ticket.phoneNumber,
-            ticket.isGroup,
-            ticket.profilePicUrl
+            chat.whatsappId || chat.phoneNumber,
+            chat.isGroup,
+            chat.profilePicUrl
         );
         // Ausencia de foto e um estado normal; 204 evita tratar o avatar padrao como erro no frontend.
         if (!picture) return res.status(204).end();
@@ -580,21 +580,21 @@ router.get('/tickets/:ticketId/profile-picture', requireAgent, async (req, res) 
 router.post('/tickets/claim', requireAgent, async (req, res) => {
     try {
         const { ticketId } = req.body;
-        const ticket = await Ticket.findOneAndUpdate(
+        const chat = await Chat.findOneAndUpdate(
             { _id: ticketId, status: { $ne: 'open' } },
             { assignedAgent: req.agent._id.toString(), status: 'open', updatedAt: new Date() },
             { returnDocument: 'after' }
         );
 
-        if (!ticket) {
-            const current = await Ticket.findById(ticketId);
+        if (!chat) {
+            const current = await Chat.findById(ticketId);
             if (!current) return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
             return res.status(409).json({ success: false, error: 'Este atendimento já foi assumido por outro agente.', data: current });
         }
 
-        await whatsappService.recordTicketEvent(ticket, req.agent, 'claimed');
-        await audit(req, 'ticket.claim', { targetType: 'ticket', targetId: ticket._id });
-        res.json({ success: true, message: 'Atendimento assumido!', data: ticket });
+        await whatsappService.recordChatEvent(chat, req.agent, 'claimed');
+        await audit(req, 'chat.claim', { targetType: 'chat', targetId: chat._id });
+        res.json({ success: true, message: 'Atendimento assumido!', data: chat });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -603,16 +603,16 @@ router.post('/tickets/claim', requireAgent, async (req, res) => {
 router.post('/tickets/close', requireAgent, async (req, res) => {
     try {
         const { ticketId } = req.body;
-        const ticket = await Ticket.findByIdAndUpdate(
+        const chat = await Chat.findByIdAndUpdate(
             ticketId,
             { status: 'closed', updatedAt: new Date() },
             { returnDocument: 'after' }
         );
 
-        if (!ticket) return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
-        await whatsappService.recordTicketEvent(ticket, req.agent, 'closed');
-        await audit(req, 'ticket.close', { targetType: 'ticket', targetId: ticket._id });
-        res.json({ success: true, message: 'Atendimento encerrado!', data: ticket });
+        if (!chat) return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
+        await whatsappService.recordChatEvent(chat, req.agent, 'closed');
+        await audit(req, 'chat.close', { targetType: 'chat', targetId: chat._id });
+        res.json({ success: true, message: 'Atendimento encerrado!', data: chat });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -621,33 +621,33 @@ router.post('/tickets/close', requireAgent, async (req, res) => {
 router.post('/tickets/unclaim', requireAgent, async (req, res) => {
     try {
         const { ticketId } = req.body;
-        const ticket = await Ticket.findById(ticketId);
-        if (!ticket) {
+        const chat = await Chat.findById(ticketId);
+        if (!chat) {
             return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
         }
 
-        ticket.status = 'pending';
-        ticket.assignedAgent = null;
-        ticket.updatedAt = new Date();
-        await ticket.save();
+        chat.status = 'pending';
+        chat.assignedAgent = null;
+        chat.updatedAt = new Date();
+        await chat.save();
 
-        await whatsappService.recordTicketEvent(ticket, req.agent, 'unclaimed');
-        await audit(req, 'ticket.unclaim', { targetType: 'ticket', targetId: ticket._id });
+        await whatsappService.recordChatEvent(chat, req.agent, 'unclaimed');
+        await audit(req, 'chat.unclaim', { targetType: 'chat', targetId: chat._id });
 
-        return res.status(200).json({ success: true, data: ticket });
+        return res.status(200).json({ success: true, data: chat });
     } catch (err) {
-        console.error('Erro ao devolver ticket:', err);
+        console.error('Erro ao devolver chat:', err);
         return res.status(500).json({ success: false, error: 'Erro interno no servidor.' });
     }
 });
 
 router.get('/tickets/:ticketId/glpi/messages', requireAgent, async (req, res) => {
     try {
-        const ticket = await Ticket.findById(req.params.ticketId);
-        if (!ticket) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
+        const chat = await Chat.findById(req.params.ticketId);
+        if (!chat) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
         const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
         const messages = await Message.find({
-            ticketId: ticket._id,
+            ticketId: chat._id,
             timestamp: { $gte: since },
             isInternalEvent: { $ne: true }
         }).sort({ timestamp: 1 }).select('_id sender body hasMedia mediaPath mediaFileName mediaMimeType timestamp groupSenderName').lean();
@@ -678,11 +678,11 @@ router.post('/tickets/:ticketId/glpi', requireAgent, async (req, res) => {
         if (messageIds.some(id => !/^[a-f\d]{24}$/i.test(id))) return res.status(400).json({ success: false, error: 'A seleção contém uma mensagem inválida.' });
         if (attachmentMessageIds.some(id => !messageIds.includes(id))) return res.status(400).json({ success: false, error: 'Só é possível anexar arquivos de mensagens selecionadas.' });
 
-        const ticket = await Ticket.findById(req.params.ticketId);
-        if (!ticket) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
+        const chat = await Chat.findById(req.params.ticketId);
+        if (!chat) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
         const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
         const messages = await Message.find({
-            ticketId: ticket._id,
+            ticketId: chat._id,
             _id: { $in: messageIds },
             timestamp: { $gte: since },
             isInternalEvent: { $ne: true }
@@ -695,13 +695,13 @@ router.post('/tickets/:ticketId/glpi', requireAgent, async (req, res) => {
             if (!filePath.startsWith(`${mediaDirectory}${path.sep}`)) return [];
             return [{ filePath, fileName: message.mediaFileName || path.basename(filePath), mimeType: message.mediaMimeType }];
         });
-        const created = await glpiService.createTicket({ title, messages, contactName: ticket.contactName, attachments });
+        const created = await glpiService.createTicket({ title, messages, contactName: chat.contactName, attachments });
         const glpiTicketUrl = glpiService.ticketUrl(created.id);
-        await whatsappService.recordGlpiTicketEvent(ticket, req.agent, created.id, glpiTicketUrl)
+        await whatsappService.recordGlpiTicketEvent(chat, req.agent, created.id, glpiTicketUrl)
             .catch(err => console.error('[GLPI][REGISTRAR EVENTO]', err.message));
-        await audit(req, 'glpi.ticket_create', {
-            targetType: 'ticket',
-            targetId: ticket._id,
+        await audit(req, 'glpi.chat_create', {
+            targetType: 'chat',
+            targetId: chat._id,
             details: {
                 glpiTicketId: created.id,
                 messageCount: messages.length,
@@ -726,7 +726,7 @@ router.post('/tickets/:ticketId/glpi', requireAgent, async (req, res) => {
 // --- ROTA DE LIMPEZA DO BANCO DE DADOS ---
 router.delete('/database/clear', requireAgent, requireAdmin, async (req, res) => {
     try {
-        await Ticket.deleteMany({});
+        await Chat.deleteMany({});
         await Message.deleteMany({});
         res.json({ success: true, message: 'Banco de dados limpo com sucesso! Todos os tickets e mensagens foram removidos.' });
     } catch (err) {

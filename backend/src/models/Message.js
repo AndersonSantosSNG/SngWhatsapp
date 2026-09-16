@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const MessageSchema = new mongoose.Schema({
-    ticketId: { type: mongoose.Schema.Types.ObjectId, ref: 'Ticket', required: true },
+    ticketId: { type: mongoose.Schema.Types.ObjectId, ref: 'Chat', required: true },
     phoneNumber: { type: String, required: true },
     whatsappMessageId: { type: String, default: '', index: true },
     sender: { type: String, enum: ['client', 'agent'], required: true },

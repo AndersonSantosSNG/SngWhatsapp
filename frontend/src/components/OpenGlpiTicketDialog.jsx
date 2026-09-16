@@ -12,7 +12,7 @@ function MediaPreview({ message }) {
   return <a className="glpi-media-preview file" href={url} target="_blank" rel="noreferrer"><i className="fa-solid fa-file-arrow-down" /><span>{message.mediaFileName || 'Abrir arquivo'}</span></a>;
 }
 
-export default function OpenGlpiTicketDialog({ ticket, onCreate, onCancel }) {
+export default function OpenGlpiTicketDialog({ chat, onCreate, onCancel }) {
   const dialog = useRef(null);
   const [title, setTitle] = useState('');
   const [messages, setMessages] = useState([]);
@@ -29,7 +29,7 @@ export default function OpenGlpiTicketDialog({ ticket, onCreate, onCancel }) {
   }, []);
   useEffect(() => {
     let active = true;
-    api(`/tickets/${ticket._id}/glpi/messages`)
+    api(`/tickets/${chat._id}/glpi/messages`)
       .then(result => {
         if (!active) return;
         setMessages(result.data);
@@ -39,7 +39,7 @@ export default function OpenGlpiTicketDialog({ ticket, onCreate, onCancel }) {
       .catch(err => { if (active) setError(err.message || 'Não foi possível carregar as mensagens.'); })
       .finally(() => { if (active) setLoadingMessages(false); });
     return () => { active = false; };
-  }, [ticket._id]);
+  }, [chat._id]);
 
   const toggleMessage = messageId => setSelectedIds(current => {
     const next = new Set(current);
@@ -83,7 +83,7 @@ export default function OpenGlpiTicketDialog({ ticket, onCreate, onCancel }) {
     <form onSubmit={submit}>
       <h2 id="glpi-ticket-title">Abrir chamado</h2>
       <p>O histórico desta conversa nas últimas 48 horas será incluído no chamado do GLPI.</p>
-      <label>Título do chamado<input autoFocus maxLength={255} value={title} disabled={creating} onChange={event => setTitle(event.target.value)} placeholder={`Atendimento - ${ticket.contactName || ticket.phoneNumber}`} /></label>
+      <label>Título do chamado<input autoFocus maxLength={255} value={title} disabled={creating} onChange={event => setTitle(event.target.value)} placeholder={`Atendimento - ${chat.contactName || chat.phoneNumber}`} /></label>
       <div className="glpi-message-heading"><strong>Mensagens que serão enviadas</strong>{messages.length > 0 && <button type="button" className={selectedIds.size === messages.length ? 'clear-selection' : 'select-all'} onClick={toggleAll} disabled={creating}><i className={`fa-solid ${selectedIds.size === messages.length ? 'fa-square-minus' : 'fa-square-check'}`} />{selectedIds.size === messages.length ? 'Desmarcar todas' : 'Selecionar todas'}</button>}</div>
       <div className="glpi-message-list" aria-label="Mensagens das últimas 48 horas">
         {loadingMessages && <p>Carregando mensagens...</p>}
