@@ -25,7 +25,14 @@ const pendingOutgoingMedia = [];
 const historySyncDays = Math.max(1, Number.parseInt(process.env.HISTORY_SYNC_DAYS || '30', 10));
 const historySyncLimit = Math.max(1, Number.parseInt(process.env.HISTORY_SYNC_LIMIT || '1000', 10));
 const historySyncMedia = process.env.HISTORY_SYNC_MEDIA !== 'false';
+const MESSAGE_EDIT_WINDOW_MS = 15 * 60 * 1000;
+const MESSAGE_REVOKE_WINDOW_MS = 60 * 60 * 60 * 1000;
 let historySyncPromise = null;
+
+function isWithinMessageWindow(message, windowMs) {
+    const sentAt = new Date(message.timestamp || message.createdAt || 0).getTime();
+    return Number.isFinite(sentAt) && Date.now() - sentAt <= windowMs;
+}
 
 function getMediaExtension(media) {
     const originalExtension = path.extname(media.filename || '').replace(/[^.a-zA-Z0-9]/g, '');
@@ -826,6 +833,7 @@ function initWhatsApp(io) {
 
             const msgData = {
                 id: savedDbMessage._id.toString(),
+                whatsappMessageId: savedDbMessage.whatsappMessageId,
                 ticketId: ticket._id.toString(),
                 from: msg.from,
                 senderName: isGroupChat ? groupSenderName : (senderName || identifier),
@@ -840,6 +848,7 @@ function initWhatsApp(io) {
                 mediaMimeType: mediaInfo?.mediaMimeType || '',
                 mediaFileName: mediaInfo?.mediaFileName || '',
                 timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+                sentAt: savedDbMessage.timestamp,
                 fromMe: false
             };
 
@@ -992,6 +1001,7 @@ function initWhatsApp(io) {
 
             const msgData = {
                 id: savedDbMessage._id.toString(),
+                whatsappMessageId: savedDbMessage.whatsappMessageId,
                 ticketId: ticket._id.toString(),
                 from: targetChatId,
                 senderName: 'Você',
@@ -1005,6 +1015,7 @@ function initWhatsApp(io) {
                 mediaMimeType: savedDbMessage.mediaMimeType || '',
                 mediaFileName: savedDbMessage.mediaFileName || '',
                 timestamp: new Date(savedDbMessage.createdAt || Date.now()).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+                sentAt: savedDbMessage.timestamp,
                 fromMe: true
             };
 
@@ -1049,6 +1060,55 @@ function initWhatsApp(io) {
             }
         } catch (err) {
             console.error('Erro ao atualizar confirmacao da mensagem:', err.message);
+        }
+    });
+
+    client.on('message_edit', async (msg, newBody) => {
+        try {
+            const whatsappMessageId = getWhatsAppMessageId(msg);
+            if (!whatsappMessageId) return;
+
+            const savedMessage = await Message.findOne({ whatsappMessageId });
+            if (!savedMessage) return;
+
+            savedMessage.body = String(newBody ?? msg.body ?? '').trim();
+            savedMessage.editedAt = new Date();
+            await savedMessage.save();
+
+            if (ioInstance) {
+                ioInstance.emit('message_edit', {
+                    messageId: savedMessage._id.toString(),
+                    ticketId: savedMessage.ticketId.toString(),
+                    body: savedMessage.body,
+                    editedAt: savedMessage.editedAt
+                });
+            }
+        } catch (err) {
+            console.error('Erro ao sincronizar edicao da mensagem:', err.message);
+        }
+    });
+
+    client.on('message_revoke_everyone', async (msg, revokedMsg) => {
+        try {
+            const whatsappMessageId = getWhatsAppMessageId(revokedMsg)
+                || getWhatsAppMessageId({ id: msg?.protocolMessageKey });
+            if (!whatsappMessageId) return;
+
+            const savedMessage = await Message.findOne({ whatsappMessageId });
+            if (!savedMessage) return;
+
+            savedMessage.deletedAt = new Date();
+            await savedMessage.save();
+
+            if (ioInstance) {
+                ioInstance.emit('message_revoke', {
+                    messageId: savedMessage._id.toString(),
+                    ticketId: savedMessage.ticketId.toString(),
+                    deletedAt: savedMessage.deletedAt
+                });
+            }
+        } catch (err) {
+            console.error('Erro ao sincronizar exclusao da mensagem:', err.message);
         }
     });
 
@@ -1172,6 +1232,120 @@ async function sendMessage({ number, message, file, fileUrl, fileBase64, mimeTyp
             fromMe: true
         };
     });
+}
+
+async function editMessage(messageId, content) {
+    if (!isClientReady || !client) {
+        throw new Error('O servico de WhatsApp nao esta pronto. Tente novamente em alguns instantes.');
+    }
+
+    const body = String(content || '').trim();
+    if (!body) throw new Error('A mensagem editada nao pode ficar vazia.');
+    if (body.length > 4096) throw new Error('A mensagem editada e muito longa.');
+
+    const savedMessage = await Message.findById(messageId);
+    if (!savedMessage) throw new Error('Mensagem nao encontrada.');
+    if (savedMessage.sender !== 'agent' || savedMessage.isInternalEvent) {
+        throw new Error('Somente mensagens enviadas pelo atendimento podem ser editadas.');
+    }
+    if (!isWithinMessageWindow(savedMessage, MESSAGE_EDIT_WINDOW_MS)) {
+        throw new Error('O prazo de 15 minutos para editar esta mensagem expirou.');
+    }
+    if (!savedMessage.whatsappMessageId) {
+        throw new Error('Esta mensagem nao possui um identificador do WhatsApp e nao pode ser editada.');
+    }
+
+    const whatsappMessage = await client.getMessageById(savedMessage.whatsappMessageId);
+    if (!whatsappMessage) throw new Error('A mensagem nao foi encontrada no WhatsApp.');
+
+    let editedMessage = await whatsappMessage.edit(body);
+
+    // whatsapp-web.js currently reports @lid messages as non-editable even when
+    // WhatsApp still accepts the edit. Retry only for that known identifier type,
+    // bypassing the broken client-side capability check while keeping the server
+    // as the final authority.
+    const remoteId = String(
+        whatsappMessage.id?.remote?._serialized
+        || whatsappMessage.id?.remote?.$1
+        || whatsappMessage.id?.remote
+        || whatsappMessage.to
+        || ''
+    );
+    if (!editedMessage && remoteId.endsWith('@lid')) {
+        editedMessage = await client.pupPage.evaluate(async ({ whatsappMessageId, body }) => {
+            const collection = window.require('WAWebCollections').Msg;
+            const message = collection.get(whatsappMessageId)
+                || (await collection.getMessagesById([whatsappMessageId]))?.messages?.[0];
+            if (!message?.id?.fromMe) return null;
+
+            const result = await window.WWebJS.editMessage(message, body, {});
+            return result?.serialize?.() || null;
+        }, { whatsappMessageId: savedMessage.whatsappMessageId, body });
+    }
+
+    if (!editedMessage) {
+        throw new Error('O WhatsApp nao permite mais editar esta mensagem. A janela de edicao pode ter expirado.');
+    }
+
+    savedMessage.body = body;
+    savedMessage.editedAt = new Date();
+    await savedMessage.save();
+
+    const data = {
+        messageId: savedMessage._id.toString(),
+        ticketId: savedMessage.ticketId.toString(),
+        body: savedMessage.body,
+        editedAt: savedMessage.editedAt
+    };
+    if (ioInstance) ioInstance.emit('message_edit', data);
+    return data;
+}
+
+async function revokeMessage(messageId) {
+    if (!isClientReady || !client) {
+        throw new Error('O servico de WhatsApp nao esta pronto. Tente novamente em alguns instantes.');
+    }
+
+    const savedMessage = await Message.findById(messageId);
+    if (!savedMessage) throw new Error('Mensagem nao encontrada.');
+    if (savedMessage.sender !== 'agent' || savedMessage.isInternalEvent) {
+        throw new Error('Somente mensagens enviadas pelo atendimento podem ser apagadas.');
+    }
+    if (!isWithinMessageWindow(savedMessage, MESSAGE_REVOKE_WINDOW_MS)) {
+        throw new Error('O prazo de 2 dias e 12 horas para apagar esta mensagem para todos expirou.');
+    }
+    if (savedMessage.deletedAt) throw new Error('Esta mensagem ja foi apagada.');
+    if (!savedMessage.whatsappMessageId) {
+        throw new Error('Esta mensagem nao possui um identificador do WhatsApp e nao pode ser apagada.');
+    }
+
+    const whatsappMessage = await client.getMessageById(savedMessage.whatsappMessageId);
+    if (!whatsappMessage?.fromMe) throw new Error('A mensagem nao foi encontrada como enviada por esta conta.');
+
+    const canRevoke = await client.pupPage.evaluate(async whatsappMessageId => {
+        const collection = window.require('WAWebCollections').Msg;
+        const message = collection.get(whatsappMessageId)
+            || (await collection.getMessagesById([whatsappMessageId]))?.messages?.[0];
+        if (!message?.id?.fromMe) return false;
+        const capability = window.require('WAWebMsgActionCapability');
+        return Boolean(capability.canSenderRevokeMsg(message) || capability.canAdminRevokeMsg(message));
+    }, savedMessage.whatsappMessageId);
+
+    if (!canRevoke) {
+        throw new Error('O WhatsApp nao permite mais apagar esta mensagem para todos.');
+    }
+
+    await whatsappMessage.delete(true, false);
+    savedMessage.deletedAt = new Date();
+    await savedMessage.save();
+
+    const data = {
+        messageId: savedMessage._id.toString(),
+        ticketId: savedMessage.ticketId.toString(),
+        deletedAt: savedMessage.deletedAt
+    };
+    if (ioInstance) ioInstance.emit('message_revoke', data);
+    return data;
 }
 
 async function getAllChats() {
@@ -1409,6 +1583,8 @@ module.exports = {
     resolveStoredMentions: messages => hydrateStoredMentions(messages, isClientReady ? client : null),
     initWhatsApp,
     sendMessage,
+    editMessage,
+    revokeMessage,
     getStatus,
     destroyClient,
     getAllChats,

@@ -3,10 +3,11 @@ import Avatar from './Avatar';
 import GroupMembersDialog from './GroupMembersDialog';
 import CloseTicketDialog from './CloseTicketDialog';
 import OpenGlpiTicketDialog from './OpenGlpiTicketDialog';
+import DeleteMessageDialog from './DeleteMessageDialog';
 import MessageBubble from './MessageBubble';
 import { formatPhone } from '../utils/phone';
 
-export default function ChatPanel({ ticket, messages, unreadMarker, contactOnline, hasOlderMessages, loadingOlderMessages, onLoadOlder, onSend, onFile, onToggle, onClose, onCreateGlpiTicket, onBack, onOpenImage }) {
+export default function ChatPanel({ ticket, messages, unreadMarker, contactOnline, hasOlderMessages, loadingOlderMessages, onLoadOlder, onSend, onEdit, onDelete, onFile, onToggle, onClose, onCreateGlpiTicket, onBack, onOpenImage }) {
   const [text, setText] = useState('');
   const [membersTicketId, setMembersTicketId] = useState(null);
   useEffect(() => setMembersTicketId(null), [ticket?._id]);
@@ -16,9 +17,12 @@ export default function ChatPanel({ ticket, messages, unreadMarker, contactOnlin
   useEffect(() => setGlpiTicketId(null), [ticket?._id]);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [replyTo, setReplyTo] = useState(null);
+  const [editingMessage, setEditingMessage] = useState(null);
+  const [deletingMessage, setDeletingMessage] = useState(null);
   const [highlightedMessage, setHighlightedMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
+  useEffect(() => { setEditingMessage(null); setDeletingMessage(null); setReplyTo(null); setText(''); }, [ticket?._id]);
   const bottom = useRef(null);
   const messageElements = useRef(new Map());
   const highlightTimer = useRef(null);
@@ -83,11 +87,28 @@ export default function ChatPanel({ ticket, messages, unreadMarker, contactOnlin
     if (!text.trim() || sending) return;
     const value = text.trim();
     const selectedReply = replyTo;
+    const selectedEdit = editingMessage;
     const replyId = selectedReply?.id || selectedReply?._id;
-    setSending(true); setSendError(''); setText(''); setReplyTo(null);
-    try { await onSend(value, replyId); }
-    catch (err) { setText(value); setReplyTo(selectedReply); setSendError(err.message || 'Não foi possível enviar. Tente novamente.'); }
+    setSending(true); setSendError(''); setText(''); setReplyTo(null); setEditingMessage(null);
+    try {
+      if (selectedEdit) await onEdit(selectedEdit.id || selectedEdit._id, value);
+      else await onSend(value, replyId);
+    }
+    catch (err) { setText(value); setReplyTo(selectedReply); setEditingMessage(selectedEdit); setSendError(err.message || 'Não foi possível concluir. Tente novamente.'); }
     finally { setSending(false); }
+  };
+  const startEditing = message => {
+    setEditingMessage(message);
+    setReplyTo(null);
+    setText(message.body || '');
+    setSendError('');
+  };
+  const deleteForEveryone = async message => {
+    await onDelete(message.id || message._id);
+    if (String(editingMessage?.id || editingMessage?._id) === String(message.id || message._id)) {
+      setEditingMessage(null);
+      setText('');
+    }
   };
   const genericNames = ['', 'Grupo', 'Grupo sem nome', 'Grupo do WhatsApp'];
   const rawDisplayName = ticket.contactName || ticket.phoneNumber;
@@ -113,9 +134,10 @@ export default function ChatPanel({ ticket, messages, unreadMarker, contactOnlin
     {ticket.isGroup && membersTicketId === ticket._id && <GroupMembersDialog key={ticket._id} ticket={ticket} onClose={() => setMembersTicketId(null)} />}
     {closingTicketId === ticket._id && <CloseTicketDialog key={ticket._id} canSendMessages={canSendMessages} onSend={onSend} onClose={onClose} onCancel={() => setClosingTicketId(null)} />}
     {glpiTicketId === ticket._id && <OpenGlpiTicketDialog key={ticket._id} ticket={ticket} onCreate={onCreateGlpiTicket} onCancel={() => setGlpiTicketId(null)} />}
+    {deletingMessage && <DeleteMessageDialog message={deletingMessage} onConfirm={deleteForEveryone} onCancel={() => setDeletingMessage(null)} />}
     <header className="chat-header"><button type="button" className="mobile-back" onClick={onBack} aria-label="Voltar para conversas"><i className="fa-solid fa-arrow-left" /></button><div className="chat-contact">{ticket.isGroup ? <button type="button" className="group-profile-button" onClick={() => setMembersTicketId(ticket._id)} title="Ver membros do grupo" aria-label="Ver membros do grupo"><Avatar ticket={ticket} /></button> : <Avatar ticket={ticket} />}<div><span className="chat-title-line"><strong>{displayName}</strong><em className={`badge ${ticket.status}`}>{ticket.status === 'closed' ? 'Encerrado' : ticket.status === 'open' ? 'Em atendimento' : 'Pendente'}</em></span><small>{ticket.isGroup ? 'Grupo do WhatsApp' : contactOnline ? <span className="contact-online"><i />online</span> : formatPhone(ticket.phoneNumber)}</small></div></div><div className="chat-actions"><button type="button" className="secondary" onClick={() => setGlpiTicketId(ticket._id)}><i className="fa-solid fa-ticket" /><span>Abrir chamado</span></button><button className={ticket.status === 'open' ? 'warning' : 'primary'} onClick={onToggle}><i className={`fa-solid ${ticket.status === 'open' ? 'fa-arrow-rotate-left' : 'fa-user-check'}`} /><span>{ticket.status === 'open' ? 'Devolver' : 'Assumir'}</span></button><button className="danger" onClick={() => setClosingTicketId(ticket._id)}><i className="fa-solid fa-check-double" /><span>Encerrar</span></button><button type="button" className="close-view" onClick={onBack} title="Fechar conversa" aria-label="Fechar conversa"><i className="fa-solid fa-xmark" /></button></div></header>
-    <div className="messages" ref={messagesContainer} onScroll={handleMessagesScroll}>{hasOlderMessages && <button type="button" className="load-older-messages" onClick={loadOlder} disabled={loadingOlderMessages}><i className={`fa-solid ${loadingOlderMessages ? 'fa-spinner fa-spin' : 'fa-clock-rotate-left'}`} />{loadingOlderMessages ? 'Carregando...' : 'Carregar mensagens anteriores'}</button>}{messages.map((message, index) => { const messageId = String(message.id || message._id); return <Fragment key={messageId}>{index === unreadIndex && <div className="unread-separator" ref={unreadSeparator}><span>Novas mensagens</span></div>}<div ref={element => { if (element) messageElements.current.set(messageId, element); else messageElements.current.delete(messageId); }} className={highlightedMessage === messageId ? 'quote-highlight-wrapper' : ''}><MessageBubble message={message} isGroup={ticket.isGroup} onImage={onOpenImage} onReply={canSendMessages ? setReplyTo : undefined} onQuotedClick={scrollToQuotedMessage} /></div></Fragment>; })}<div ref={bottom} /></div>
+    <div className="messages" ref={messagesContainer} onScroll={handleMessagesScroll}>{hasOlderMessages && <button type="button" className="load-older-messages" onClick={loadOlder} disabled={loadingOlderMessages}><i className={`fa-solid ${loadingOlderMessages ? 'fa-spinner fa-spin' : 'fa-clock-rotate-left'}`} />{loadingOlderMessages ? 'Carregando...' : 'Carregar mensagens anteriores'}</button>}{messages.map((message, index) => { const messageId = String(message.id || message._id); return <Fragment key={messageId}>{index === unreadIndex && <div className="unread-separator" ref={unreadSeparator}><span>Novas mensagens</span></div>}<div ref={element => { if (element) messageElements.current.set(messageId, element); else messageElements.current.delete(messageId); }} className={highlightedMessage === messageId ? 'quote-highlight-wrapper' : ''}><MessageBubble message={message} isGroup={ticket.isGroup} onImage={onOpenImage} onReply={canSendMessages ? setReplyTo : undefined} onEdit={canSendMessages ? startEditing : undefined} onDelete={canSendMessages ? setDeletingMessage : undefined} onQuotedClick={scrollToQuotedMessage} /></div></Fragment>; })}<div ref={bottom} /></div>
     {showScrollButton && <button className="scroll-to-bottom" type="button" onClick={scrollToBottom} title="Ir para o fim da conversa" aria-label="Ir para o fim da conversa"><i className="fa-solid fa-chevron-down" /></button>}
-    {canSendMessages ? <form className={`composer ${replyTo ? 'with-reply' : ''}`} onSubmit={submit}>{replyTo && <div className="reply-preview"><div><strong>{(replyTo.fromMe ?? replyTo.sender === 'agent') ? 'Você' : (replyTo.groupSenderName || replyTo.senderName || displayName)}</strong><span>{replyTo.body || (replyTo.hasMedia ? 'Mídia/Arquivo' : 'Mensagem')}</span></div><button type="button" onClick={() => setReplyTo(null)} title="Cancelar resposta" aria-label="Cancelar resposta"><i className="fa-solid fa-xmark" /></button></div>}{sendError && <div className="composer-feedback error" role="alert"><i className="fa-solid fa-circle-exclamation" aria-hidden="true" /><span>{sendError}</span><button type="button" onClick={() => setSendError('')} aria-label="Fechar aviso de envio" title="Fechar aviso"><i className="fa-solid fa-xmark" aria-hidden="true" /></button></div>}<label title="Anexar arquivo"><i className="fa-solid fa-paperclip" /><input type="file" hidden disabled={sending} onChange={event => { const file = event.target.files[0]; const replyId = replyTo?.id || replyTo?._id; if (file) onFile(file, text, replyId).then(() => { setText(''); setReplyTo(null); setSendError(''); }).catch(err => setSendError(err.message || 'Não foi possível enviar o arquivo.')); event.target.value = ''; }} /></label><input value={text} disabled={sending} onChange={event => setText(event.target.value)} placeholder={sending ? 'Enviando...' : replyTo ? 'Responder mensagem' : 'Digite uma mensagem'} /><button type="submit" disabled={sending || !text.trim()} aria-label="Enviar mensagem"><i className={`fa-solid ${sending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`} /></button></form> : <div className="read-only-conversation"><i className="fa-solid fa-lock" /><span>Esta conversa não permite o envio de mensagens.</span></div>}
+    {canSendMessages ? <form className={`composer ${replyTo || editingMessage ? 'with-reply' : ''}`} onSubmit={submit}>{editingMessage && <div className="reply-preview edit-preview"><div><strong>Editando mensagem</strong><span>{editingMessage.body}</span></div><button type="button" onClick={() => { setEditingMessage(null); setText(''); }} title="Cancelar edição" aria-label="Cancelar edição"><i className="fa-solid fa-xmark" /></button></div>}{replyTo && <div className="reply-preview"><div><strong>{(replyTo.fromMe ?? replyTo.sender === 'agent') ? 'Você' : (replyTo.groupSenderName || replyTo.senderName || displayName)}</strong><span>{replyTo.body || (replyTo.hasMedia ? 'Mídia/Arquivo' : 'Mensagem')}</span></div><button type="button" onClick={() => setReplyTo(null)} title="Cancelar resposta" aria-label="Cancelar resposta"><i className="fa-solid fa-xmark" /></button></div>}{sendError && <div className="composer-feedback error" role="alert"><i className="fa-solid fa-circle-exclamation" aria-hidden="true" /><span>{sendError}</span><button type="button" onClick={() => setSendError('')} aria-label="Fechar aviso de envio" title="Fechar aviso"><i className="fa-solid fa-xmark" aria-hidden="true" /></button></div>}{!editingMessage && <label title="Anexar arquivo"><i className="fa-solid fa-paperclip" /><input type="file" hidden disabled={sending} onChange={event => { const file = event.target.files[0]; const replyId = replyTo?.id || replyTo?._id; if (file) onFile(file, text, replyId).then(() => { setText(''); setReplyTo(null); setSendError(''); }).catch(err => setSendError(err.message || 'Não foi possível enviar o arquivo.')); event.target.value = ''; }} /></label>}<input value={text} disabled={sending} onChange={event => setText(event.target.value)} placeholder={sending ? (editingMessage ? 'Salvando edição...' : 'Enviando...') : editingMessage ? 'Editar mensagem' : replyTo ? 'Responder mensagem' : 'Digite uma mensagem'} /><button type="submit" disabled={sending || !text.trim()} aria-label={editingMessage ? 'Salvar edição' : 'Enviar mensagem'}><i className={`fa-solid ${sending ? 'fa-spinner fa-spin' : editingMessage ? 'fa-check' : 'fa-paper-plane'}`} /></button></form> : <div className="read-only-conversation"><i className="fa-solid fa-lock" /><span>Esta conversa não permite o envio de mensagens.</span></div>}
   </section>;
 }

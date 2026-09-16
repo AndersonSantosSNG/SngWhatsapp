@@ -455,6 +455,46 @@ router.get('/messages/:messageId/media', requireAgent, async (req, res) => {
     }
 });
 
+router.patch('/messages/:messageId', requireAgent, async (req, res) => {
+    try {
+        const data = await whatsappService.editMessage(req.params.messageId, req.body?.body);
+        await audit(req, 'message.edit', {
+            targetType: 'message',
+            targetId: req.params.messageId,
+            details: { ticketId: data.ticketId }
+        });
+        res.json({ success: true, data });
+    } catch (err) {
+        await audit(req, 'message.edit', {
+            targetType: 'message',
+            targetId: req.params.messageId,
+            success: false,
+            details: { error: err.message }
+        });
+        res.status(400).json({ success: false, error: err.message || 'Nao foi possivel editar a mensagem.' });
+    }
+});
+
+router.delete('/messages/:messageId/everyone', requireAgent, async (req, res) => {
+    try {
+        const data = await whatsappService.revokeMessage(req.params.messageId);
+        await audit(req, 'message.revoke', {
+            targetType: 'message',
+            targetId: req.params.messageId,
+            details: { ticketId: data.ticketId }
+        });
+        res.json({ success: true, data });
+    } catch (err) {
+        await audit(req, 'message.revoke', {
+            targetType: 'message',
+            targetId: req.params.messageId,
+            success: false,
+            details: { error: err.message }
+        });
+        res.status(400).json({ success: false, error: err.message || 'Nao foi possivel apagar a mensagem.' });
+    }
+});
+
 router.get('/tickets/:ticketId/profile-picture', requireAgent, async (req, res) => {
     try {
         const ticket = await Ticket.findById(req.params.ticketId);

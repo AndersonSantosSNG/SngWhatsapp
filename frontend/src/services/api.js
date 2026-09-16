@@ -27,3 +27,14 @@ export function sendMessage(payload) {
     body: JSON.stringify(payload)
   });
 }
+
+export function editMessage(messageId, body) {
+  return api(`/messages/${messageId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ body })
+  });
+}
+
+export function deleteMessage(messageId) {
+  return api(`/messages/${messageId}/everyone`, { method: 'DELETE' });
+}

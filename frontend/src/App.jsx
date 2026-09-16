@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
-import { api, sendMessage } from './services/api';
+import { api, deleteMessage, editMessage, sendMessage } from './services/api';
 import Sidebar from './components/Sidebar';
 import TicketList from './components/TicketList';
 import ChatPanel from './components/ChatPanel';
@@ -192,14 +192,16 @@ export default function App() {
       }
     };
     const onAck = ({ messageId, ack }) => setMessages(current => current.map(message => (message.id || message._id) === messageId ? { ...message, ack } : message));
+    const onEdit = ({ messageId, body, editedAt }) => setMessages(current => current.map(message => String(message.id || message._id) === String(messageId) ? { ...message, body, editedAt } : message));
+    const onRevoke = ({ messageId, deletedAt }) => setMessages(current => current.map(message => String(message.id || message._id) === String(messageId) ? { ...message, deletedAt } : message));
     const onTicketEvent = event => {
       if (event.ticket) syncTicket(event.ticket);
       else loadTickets({ showLoading: false }).catch(console.error);
       if (activeTicket?._id === event.ticketId) setMessages(current => current.some(item => (item.id || item._id) === event.id) ? current : [...current, event]);
     };
     const onHistorySyncComplete = () => loadTickets({ showLoading: false }).catch(console.error);
-    socket.on('connect', onConnect); socket.on('disconnect', onDisconnect); socket.on('qr_code', onQr); socket.on('new_message', onMessage); socket.on('message_ack', onAck); socket.on('ticket_event', onTicketEvent); socket.on('history_sync_complete', onHistorySyncComplete);
-    return () => { socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); socket.off('qr_code', onQr); socket.off('new_message', onMessage); socket.off('message_ack', onAck); socket.off('ticket_event', onTicketEvent); socket.off('history_sync_complete', onHistorySyncComplete); };
+    socket.on('connect', onConnect); socket.on('disconnect', onDisconnect); socket.on('qr_code', onQr); socket.on('new_message', onMessage); socket.on('message_ack', onAck); socket.on('message_edit', onEdit); socket.on('message_revoke', onRevoke); socket.on('ticket_event', onTicketEvent); socket.on('history_sync_complete', onHistorySyncComplete);
+    return () => { socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); socket.off('qr_code', onQr); socket.off('new_message', onMessage); socket.off('message_ack', onAck); socket.off('message_edit', onEdit); socket.off('message_revoke', onRevoke); socket.off('ticket_event', onTicketEvent); socket.off('history_sync_complete', onHistorySyncComplete); };
   }, [activeTicket?._id, agent?._id, loadTickets, loadWhatsAppStatus, syncTicket]);
 
   useEffect(() => {
@@ -232,6 +234,8 @@ export default function App() {
   const login = async (corporateEmail, password) => { const result = await api('/auth/login', { method: 'POST', body: JSON.stringify({ corporateEmail, password }) }); storage.set('agentAuthToken', result.token); socket.auth = { token: result.token }; socket.connect(); setAuthNotice(''); setAgent(result.data); await loadTickets(); };
   const logout = async () => { try { await api('/auth/logout', { method: 'POST' }); } catch {} socket.disconnect(); storage.remove('agentAuthToken'); setUnreadByTicket({}); setUnreadMarker(null); setAgent(null); };
   const send = (message, replyToMessageId, { isClosingMessage = false } = {}) => sendMessage({ number: activeTicket.phoneNumber, message, replyToMessageId, isClosingMessage });
+  const edit = (messageId, body) => editMessage(messageId, body);
+  const remove = messageId => deleteMessage(messageId);
   const startConversation = async number => {
     const result = await api('/tickets/start', { method: 'POST', body: JSON.stringify({ phoneNumber: number }) });
     console.log('[NOVA CONVERSA][PAYLOAD WHATSAPP]', result.whatsappPayload);
@@ -279,7 +283,7 @@ export default function App() {
 
   return <div className={`app-shell ${agent && tab === 'tickets' && activeTicket ? 'mobile-chat-open' : ''}`}>
     {agent && <Sidebar {...{ tab, setTab, agent, connected, collapsed, setCollapsed, logout }} />}
-    {agent && tab === 'tickets' && <main className={`conversations-layout ${activeTicket ? 'has-active-ticket' : ''}`}><TicketList {...{ tickets, loading: ticketsLoading, activeId: activeTicket?._id, agentId: agent._id, unreadByTicket, onSelect: selectTicket, reload: loadTickets, onNewConversation: startConversation, theme, setTheme }} /><ChatPanel ticket={activeTicket} messages={messages} unreadMarker={unreadMarker} contactOnline={contactOnline} hasOlderMessages={hasOlderMessages} loadingOlderMessages={loadingOlderMessages} onLoadOlder={loadOlderMessages} onSend={send} onFile={sendFile} onToggle={toggle} onClose={close} onCreateGlpiTicket={createGlpiTicket} onBack={closeView} onOpenImage={setViewer} /></main>}
+    {agent && tab === 'tickets' && <main className={`conversations-layout ${activeTicket ? 'has-active-ticket' : ''}`}><TicketList {...{ tickets, loading: ticketsLoading, activeId: activeTicket?._id, agentId: agent._id, unreadByTicket, onSelect: selectTicket, reload: loadTickets, onNewConversation: startConversation, theme, setTheme }} /><ChatPanel ticket={activeTicket} messages={messages} unreadMarker={unreadMarker} contactOnline={contactOnline} hasOlderMessages={hasOlderMessages} loadingOlderMessages={loadingOlderMessages} onLoadOlder={loadOlderMessages} onSend={send} onEdit={edit} onDelete={remove} onFile={sendFile} onToggle={toggle} onClose={close} onCreateGlpiTicket={createGlpiTicket} onBack={closeView} onOpenImage={setViewer} /></main>}
     {agent && tab === 'dashboard' && <Dashboard connected={connected} qr={qr} />}
     {agent && tab === 'settings' && <Settings agent={agent} onAgentChange={setAgent} />}
     {!agent && <LoginModal onLogin={login} notice={authNotice} />}

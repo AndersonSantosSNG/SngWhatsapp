@@ -22,6 +22,8 @@ const MessageSchema = new mongoose.Schema({
     mediaPath: { type: String, default: '' },
     mediaMimeType: { type: String, default: '' },
     mediaFileName: { type: String, default: '' },
+    editedAt: { type: Date, default: null },
+    deletedAt: { type: Date, default: null },
     timestamp: { type: Date, default: Date.now }
 });
 
