@@ -67,7 +67,7 @@ export default function MessageBubble({ message, isGroup, onImage, onReply, onEd
   useEffect(() => () => clearTimeout(longPressTimer.current), []);
   if (message.isInternalEvent) {
     const eventDate = new Date(message.timestamp || message.createdAt || Date.now()).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
-    const icons = { claimed: 'fa-user-check', unclaimed: 'fa-arrow-rotate-left', closed: 'fa-circle-check', glpi_created: 'fa-circle-check' };
+    const icons = { claimed: 'fa-user-check', unclaimed: 'fa-arrow-rotate-left', closed: 'fa-circle-check', glpi_created: 'fa-circle-check', call_received: 'fa-phone-slash' };
     const glpiEvent = message.internalAction === 'glpi_created' && message.glpiTicketId;
     return <div className="internal-event"><span><i className={`fa-solid ${icons[message.internalAction] || 'fa-circle-info'}`} />{glpiEvent ? <>{message.internalActorName} abriu um chamado <a href={message.glpiTicketUrl} target="_blank" rel="noopener noreferrer">{message.glpiTicketId}</a></> : message.body}<time>{eventDate}</time></span></div>;
   }

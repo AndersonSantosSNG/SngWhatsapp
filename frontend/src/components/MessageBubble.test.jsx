@@ -32,4 +32,15 @@ describe('MessageBubble', () => {
     expect(link).toHaveAttribute('href', 'https://atendimento.sng.com.br/front/ticket.form.php?id=1234');
     expect(screen.getByText(/Anderson Santos abriu um chamado/)).toBeVisible();
   });
+  it('exibe chamada recebida como evento no chat', () => {
+    render(<MessageBubble message={{
+      sender: 'client',
+      isInternalEvent: true,
+      internalAction: 'call_received',
+      body: 'Chamada de voz recebida — não atendida neste atendimento',
+      timestamp: '2026-09-16T13:25:00.000Z'
+    }} />);
+    expect(screen.getByText(/Chamada de voz recebida/)).toBeVisible();
+    expect(document.querySelector('.fa-phone-slash')).toBeInTheDocument();
+  });
 });

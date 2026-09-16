@@ -23,7 +23,7 @@ export default function Sidebar({ tab, setTab, agent, connected, collapsed, setC
           {!collapsed && <><img className="brand-logo" src={logo} alt="SNG" /><strong>SNG Chat</strong></>}
           <button onClick={() => setCollapsed(!collapsed)} title="Expandir ou recolher"><i className={`fa-solid fa-angles-${collapsed ? 'right' : 'left'}`} /></button>
         </header>
-        <nav>{items.map(([id, icon, label]) => <button key={id} title={label} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}><i className={`fa-solid ${icon}`} />{!collapsed && <span>{label}</span>}</button>)}<button className="mobile-logout" onClick={() => setConfirmLogout(true)} title="Sair"><i className="fa-solid fa-right-from-bracket" /><span>Sair</span></button></nav>
+        <nav>{items.map(([id, icon, label]) => <button key={id} title={label} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}><i className={`fa-solid ${icon}`} />{!collapsed && <span>{label}</span>}</button>)}<button title="Documentação" onClick={() => window.open('/docs', '_blank', 'noopener,noreferrer')}><i className="fa-solid fa-book-open" />{!collapsed && <span>Documentação</span>}</button><button className="mobile-logout" onClick={() => setConfirmLogout(true)} title="Sair"><i className="fa-solid fa-right-from-bracket" /><span>Sair</span></button></nav>
       </div>
       <footer>
         <div title={agent?.name}><i className="fa-solid fa-headset" />{!collapsed && <span>{agent?.name}{agent?.role === 'admin' ? ' (Admin)' : ''}</span>}</div>

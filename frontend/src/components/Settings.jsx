@@ -4,14 +4,16 @@ import { api } from '../services/api';
 export default function Settings({ agent, onAgentChange }) {
   const [agents, setAgents] = useState([]);
   const [apiClients, setApiClients] = useState([]);
+  const [auditLogs, setAuditLogs] = useState([]);
   const [revealedKey, setRevealedKey] = useState('');
   const [feedback, setFeedback] = useState('');
   const adminAccess = agent.role === 'admin';
   const load = async () => {
     if (!adminAccess) return;
-    const [agentsResult, clientsResult] = await Promise.all([api('/agents'), api('/api-clients')]);
+    const [agentsResult, clientsResult, auditResult] = await Promise.all([api('/agents'), api('/api-clients'), api('/audit-logs?limit=100')]);
     setAgents(agentsResult.data);
     setApiClients(clientsResult.data);
+    setAuditLogs(auditResult.data);
   };
   useEffect(() => { load().catch(console.error); }, [agent.role]);
   const profile = async event => {
@@ -72,5 +74,6 @@ export default function Settings({ agent, onAgentChange }) {
     {feedback && <p className="feedback">{feedback}</p>}
     {adminAccess && <section className="card agents-card"><div className="form-heading"><h2>Agentes cadastrados</h2><p>Lista visível somente para administradores desbloqueados.</p></div>{agents.map(item => <div className={`agent-row ${item.active ? '' : 'blocked'}`} key={item._id}><i className={`fa-solid ${item.active ? 'fa-user' : 'fa-user-lock'}`} /><span><strong>{item.name}</strong><small>{item.corporateEmail}</small></span><em>{item.active ? (item.role === 'admin' ? 'Administrador' : 'Agente') : 'Bloqueado'}</em><button type="button" className={item.active ? 'block-agent' : 'unblock-agent'} disabled={item._id === agent._id} onClick={() => changeStatus(item)} title={item._id === agent._id ? 'Voce nao pode bloquear sua propria conta' : undefined}><i className={`fa-solid ${item.active ? 'fa-ban' : 'fa-unlock'}`} />{item.active ? 'Bloquear' : 'Reativar'}</button></div>)}</section>}
     {adminAccess && <section className="card agents-card api-clients-card"><div className="form-heading"><h2>Integrações da API</h2><p>Cada chave só pode ser usada pelo site associado quando enviada pelo navegador.</p></div>{!apiClients.length && <p>Nenhuma integração cadastrada.</p>}{apiClients.map(item => <div className={`api-client-row ${item.active ? '' : 'blocked'}`} key={item._id}><i className="fa-solid fa-globe" /><span><strong>{item.name}</strong><small>{item.allowedOrigin}</small><code>{item.keyPrefix}</code></span><div className="api-client-usage"><em>{item.active ? 'Ativa' : 'Bloqueada'}</em><small>{item.lastUsedAt ? `Último uso: ${new Date(item.lastUsedAt).toLocaleString('pt-BR')}` : 'Nunca utilizada'}</small></div><button type="button" onClick={() => rotateApiKey(item)} title="Gerar uma nova chave"><i className="fa-solid fa-rotate" />Nova chave</button><button type="button" className={item.active ? 'block-agent' : 'unblock-agent'} onClick={() => changeApiClientStatus(item)}><i className={`fa-solid ${item.active ? 'fa-ban' : 'fa-unlock'}`} />{item.active ? 'Bloquear' : 'Reativar'}</button><button type="button" className="delete-api-client" onClick={() => deleteApiClient(item)} title="Excluir integração"><i className="fa-solid fa-trash" />Excluir</button></div>)}</section>}
+    {adminAccess && <section className="card agents-card audit-card"><div className="form-heading audit-heading"><div><h2>Auditoria</h2><p>Últimas 100 ações. Senhas, chaves e conteúdo de mensagens ficam ocultos.</p></div><button type="button" onClick={() => load().catch(console.error)}><i className="fa-solid fa-rotate" />Atualizar</button></div><div className="audit-list">{auditLogs.map(item => <article className={`audit-row ${item.success ? '' : 'failed'}`} key={item._id}><i className={`fa-solid ${item.success ? 'fa-circle-check' : 'fa-circle-xmark'}`} /><span><strong>{item.action}</strong><small>{item.actorName || (item.actorType === 'system' ? 'Sistema' : 'Não identificado')} · {item.method} {item.path || item.targetId}</small><code>{item.requestId || item.targetId}</code></span><time>{new Date(item.createdAt).toLocaleString('pt-BR')}</time><em>{item.statusCode || (item.success ? 'OK' : 'Falha')}</em></article>)}</div></section>}
   </main>;
 }

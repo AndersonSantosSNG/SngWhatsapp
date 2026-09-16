@@ -684,6 +684,88 @@ function initWhatsApp(io) {
         isClientReady = false;
     });
 
+    client.on('call', async call => {
+        const whatsappId = String(call.from || '');
+        if (!whatsappId || call.fromMe) return;
+
+        try {
+            const callId = String(call.id || '');
+            if (callId && await Message.exists({ whatsappMessageId: callId })) return;
+
+            const isGroup = Boolean(call.isGroup || whatsappId.endsWith('@g.us'));
+            let contactName = isGroup ? 'Grupo' : '';
+            let phoneNumber = isGroup ? whatsappId : whatsappId.replace(/\D/g, '');
+            let profilePicUrl = '';
+
+            try {
+                if (isGroup) {
+                    const chat = await client.getChatById(whatsappId);
+                    contactName = getChatDisplayName(chat, contactName);
+                } else {
+                    const contact = await client.getContactById(whatsappId);
+                    contactName = contact?.name || contact?.verifiedName || contact?.pushname || '';
+                    phoneNumber = contact?.number?.replace(/\D/g, '')
+                        || (!String(contact?.id?.user || '').includes('@') ? contact?.id?.user : '')
+                        || phoneNumber;
+                }
+                profilePicUrl = await getProfilePicUrl(whatsappId) || '';
+            } catch (err) {}
+
+            let ticket = await Ticket.findOne({ $or: [{ whatsappId }, { phoneNumber }] });
+            const callDate = new Date((Number(call.timestamp) || Date.now() / 1000) * 1000);
+            const callKind = call.isVideo ? 'vídeo' : 'voz';
+            const body = `Chamada de ${callKind} recebida — não atendida neste atendimento`;
+
+            if (!ticket) {
+                ticket = await Ticket.create({
+                    phoneNumber,
+                    whatsappId,
+                    contactName: contactName || phoneNumber,
+                    profilePicUrl,
+                    isGroup,
+                    status: 'pending',
+                    lastMessage: body,
+                    lastMessageAt: callDate
+                });
+            } else {
+                ticket.whatsappId = whatsappId || ticket.whatsappId;
+                ticket.lastMessage = body;
+                ticket.lastMessageAt = callDate;
+                ticket.isTemporary = false;
+                if (contactName) ticket.contactName = contactName;
+                if (profilePicUrl) ticket.profilePicUrl = profilePicUrl;
+                if (ticket.status === 'closed') ticket.status = 'pending';
+                ticket.updatedAt = Date.now();
+                await ticket.save();
+            }
+
+            const savedCall = await Message.create({
+                ticketId: ticket._id,
+                phoneNumber: ticket.phoneNumber,
+                whatsappMessageId: callId,
+                sender: 'client',
+                isInternalEvent: true,
+                internalAction: 'call_received',
+                body,
+                timestamp: callDate
+            });
+            const message = {
+                id: savedCall._id.toString(),
+                ticketId: ticket._id.toString(),
+                sender: 'client',
+                body,
+                isInternalEvent: true,
+                internalAction: 'call_received',
+                timestamp: savedCall.timestamp,
+                fromMe: false
+            };
+
+            if (ioInstance) ioInstance.emit('new_message', { ticket, message });
+        } catch (err) {
+            console.error('Erro ao registrar chamada recebida:', err.message || err);
+        }
+    });
+
     client.on('message', async (msg) => {
         if (msg.isStatus || msg.from === 'status@broadcast' || msg.to === 'status@broadcast') return;
 

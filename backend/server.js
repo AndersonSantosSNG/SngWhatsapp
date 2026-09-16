@@ -34,6 +34,9 @@ app.use(express.static(frontendPath));
 app.get('/', (req, res) => {
     res.sendFile(path.join(frontendPath, 'index.html'));
 });
+app.get('/docs', (req, res) => {
+    res.sendFile(path.join(frontendPath, 'index.html'));
+});
 
 io.use(async (socket, next) => {
     try {
