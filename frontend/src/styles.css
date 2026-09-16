@@ -36,6 +36,7 @@ button { cursor: pointer; }
 .sidebar nav button.active { color: white; background: #059669; }
 .sidebar nav button:hover:not(.active) { color: white; background: #334155; }
 .mobile-logout { display: none !important; }
+.docs-nav-button { display: flex; }
 .collapsed nav { padding: 10px; }
 .collapsed nav button { justify-content: center; padding: 14px 0; }
 .sidebar footer { padding: 16px; border-top: 1px solid #334155; display: grid; gap: 14px; color: #94a3b8; font-size: 12px; }
@@ -373,6 +374,7 @@ body[data-theme="light"] .api-client-row code { color: #047857; }
     .sidebar nav, .collapsed nav { width: 100vw; max-width: none; height: 68px; margin: 0; padding: 5px max(5px, env(safe-area-inset-left)) 5px max(5px, env(safe-area-inset-right)); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: stretch; gap: 4px; }
     .sidebar nav button, .collapsed nav button { width: 100%; min-width: 0; height: 58px; margin: 0; padding: 5px 2px; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 10px; line-height: 1.1; text-align: center; }
     .sidebar nav .mobile-logout { display: flex !important; }
+    .sidebar nav .docs-nav-button { display: none !important; }
     .sidebar nav button i { font-size: 17px; }
     .sidebar nav button span { display: block !important; width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: center; }
     .conversations-layout, .page { width: 100%; }
