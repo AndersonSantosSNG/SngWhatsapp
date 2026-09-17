@@ -8,14 +8,14 @@ const { socket } = vi.hoisted(() => ({
     connect: vi.fn(),
     disconnect: vi.fn(),
     on: vi.fn(),
-    off: vi.fn()
-  }
+    off: vi.fn(),
+  },
 }));
 
 vi.mock('socket.io-client', () => ({ io: () => socket }));
 vi.mock('./services/api', () => ({
   api: vi.fn().mockRejectedValue(new Error('Sem sessão')),
-  sendMessage: vi.fn()
+  sendMessage: vi.fn(),
 }));
 
 import App from './App';
@@ -38,7 +38,9 @@ describe('conexão inicial com o servidor', () => {
     await act(async () => {});
     expect(fetch).toHaveBeenCalledTimes(1);
 
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
     expect(fetch).toHaveBeenNthCalledWith(2, '/api/health', { cache: 'no-store' });
     expect(screen.getByRole('heading', { name: 'Entrar como agente' })).toBeVisible();
   });

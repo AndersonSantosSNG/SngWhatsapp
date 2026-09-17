@@ -1,0 +1,15 @@
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+coverage/
+**/coverage/
+sessions/
+storage/
+.env
+**/*.ico
+**/*.jpeg
+**/*.jpg
+**/*.png
+**/*.mp3
+backend/tests/fixtures/

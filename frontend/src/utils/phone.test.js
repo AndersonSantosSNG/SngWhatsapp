@@ -6,7 +6,7 @@ describe('formatação telefônica', () => {
     ['5511999999999', '(11) 99999-9999'],
     ['551133334444', '(11) 3333-4444'],
     ['11999999999', '(11) 99999-9999'],
-    ['1133334444', '(11) 3333-4444']
+    ['1133334444', '(11) 3333-4444'],
   ])('formata %s', (input, expected) => expect(formatPhone(input)).toBe(expected));
 
   it('remove caracteres e limita o telefone nacional', () => {

@@ -169,15 +169,15 @@ O painel ficará em `http://IP_DO_SERVIDOR:3000`. Em servidor público, use HTTP
 
 ## Configuração do `.env`
 
-| Variável | Obrigatória | Padrão | Descrição |
-|---|---:|---:|---|
-| `API_SECRET_KEY` | Sim | — | Chave mestre legada da API externa; nunca deve ir para o frontend. |
-| `MONGODB_URI` | Sim | — | Endereço do MongoDB. |
-| `PORT` | Não | `3000` | Porta do backend e do painel em produção. |
-| `NODE_ENV` | Não | — | Use `production` no servidor HTTPS para cookies seguros. |
-| `HISTORY_SYNC_DAYS` | Não | `30` | Dias buscados na sincronização do histórico. |
-| `HISTORY_SYNC_LIMIT` | Não | `1000` | Máximo de mensagens importadas por conversa. |
-| `HISTORY_SYNC_MEDIA` | Não | `true` | Use `false` para ignorar mídias antigas. |
+| Variável             | Obrigatória | Padrão | Descrição                                                          |
+| -------------------- | ----------: | -----: | ------------------------------------------------------------------ |
+| `API_SECRET_KEY`     |         Sim |      — | Chave mestre legada da API externa; nunca deve ir para o frontend. |
+| `MONGODB_URI`        |         Sim |      — | Endereço do MongoDB.                                               |
+| `PORT`               |         Não | `3000` | Porta do backend e do painel em produção.                          |
+| `NODE_ENV`           |         Não |      — | Use `production` no servidor HTTPS para cookies seguros.           |
+| `HISTORY_SYNC_DAYS`  |         Não |   `30` | Dias buscados na sincronização do histórico.                       |
+| `HISTORY_SYNC_LIMIT` |         Não | `1000` | Máximo de mensagens importadas por conversa.                       |
+| `HISTORY_SYNC_MEDIA` |         Não | `true` | Use `false` para ignorar mídias antigas.                           |
 
 `ADMIN_NAME`, `ADMIN_EMAIL` e `ADMIN_PASSWORD` são opcionais e usados apenas na criação não interativa do administrador.
 

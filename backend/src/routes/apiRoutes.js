@@ -21,115 +21,155 @@ const { hashApiKey } = require('../middlewares/auth');
 const SESSION_DURATION_MS = 15 * 24 * 60 * 60 * 1000;
 
 function hashSessionToken(token) {
-    return crypto.createHash('sha256').update(token).digest('hex');
+  return crypto.createHash('sha256').update(token).digest('hex');
 }
 
 function audit(req, action, options = {}) {
-    req.auditRecorded = true;
-    return AuditLog.create({
-        action,
-        actorId: req.agent?._id || options.actorId || null,
-        actorName: req.agent?.name || options.actorName || '',
-        actorType: req.agent || options.actorId ? 'agent' : req.apiClient ? 'api_client' : options.actorType || 'anonymous',
-        targetType: options.targetType || '',
-        targetId: String(options.targetId || ''),
-        success: options.success !== false,
-        requestId: req.auditRequestId || '',
-        method: req.method || '',
-        path: req.originalUrl?.split('?')[0] || '',
-        statusCode: options.statusCode || (options.success === false ? 400 : 200),
-        durationMs: req.auditStartedAt ? Date.now() - req.auditStartedAt : 0,
-        ip: req.ip || '',
-        userAgent: req.get?.('user-agent') || '',
-        details: options.details || {}
-    }).catch(err => console.error('[AUDITORIA]', err.message));
+  req.auditRecorded = true;
+  return AuditLog.create({
+    action,
+    actorId: req.agent?._id || options.actorId || null,
+    actorName: req.agent?.name || options.actorName || '',
+    actorType:
+      req.agent || options.actorId
+        ? 'agent'
+        : req.apiClient
+          ? 'api_client'
+          : options.actorType || 'anonymous',
+    targetType: options.targetType || '',
+    targetId: String(options.targetId || ''),
+    success: options.success !== false,
+    requestId: req.auditRequestId || '',
+    method: req.method || '',
+    path: req.originalUrl?.split('?')[0] || '',
+    statusCode: options.statusCode || (options.success === false ? 400 : 200),
+    durationMs: req.auditStartedAt ? Date.now() - req.auditStartedAt : 0,
+    ip: req.ip || '',
+    userAgent: req.get?.('user-agent') || '',
+    details: options.details || {},
+  }).catch((err) => console.error('[AUDITORIA]', err.message));
 }
 
 const SENSITIVE_AUDIT_FIELDS = /password|token|secret|authorization|cookie|api.?key|filebase64/i;
 const CONTENT_AUDIT_FIELDS = /^(message|body|caption)$/i;
 
 function sanitizeAuditValue(value, key = '', depth = 0) {
-    if (SENSITIVE_AUDIT_FIELDS.test(key)) return '[REDACTED]';
-    if (CONTENT_AUDIT_FIELDS.test(key)) return `[CONTENT REDACTED:${String(value || '').length}]`;
-    if (depth >= 3) return '[TRUNCATED]';
-    if (Array.isArray(value)) return value.slice(0, 50).map(item => sanitizeAuditValue(item, key, depth + 1));
-    if (value && typeof value === 'object') {
-        return Object.fromEntries(Object.entries(value).slice(0, 50).map(([childKey, childValue]) => [childKey, sanitizeAuditValue(childValue, childKey, depth + 1)]));
-    }
-    if (typeof value === 'string') return value.slice(0, 500);
-    return value;
+  if (SENSITIVE_AUDIT_FIELDS.test(key)) return '[REDACTED]';
+  if (CONTENT_AUDIT_FIELDS.test(key)) return `[CONTENT REDACTED:${String(value || '').length}]`;
+  if (depth >= 3) return '[TRUNCATED]';
+  if (Array.isArray(value))
+    return value.slice(0, 50).map((item) => sanitizeAuditValue(item, key, depth + 1));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .slice(0, 50)
+        .map(([childKey, childValue]) => [
+          childKey,
+          sanitizeAuditValue(childValue, childKey, depth + 1),
+        ]),
+    );
+  }
+  if (typeof value === 'string') return value.slice(0, 500);
+  return value;
 }
 
 router.use((req, res, next) => {
-    if (req.path === '/health') return next();
+  if (req.path === '/health') return next();
 
-    const startedAt = Date.now();
-    req.auditStartedAt = startedAt;
-    req.auditRequestId = req.get('x-request-id') || crypto.randomUUID();
-    res.setHeader('X-Request-Id', req.auditRequestId);
-    res.once('finish', () => {
-        if (req.auditRecorded) return;
-        const routePath = req.route?.path || req.path;
-        const actorType = req.agent ? 'agent' : req.apiClient ? 'api_client' : 'anonymous';
-        AuditLog.create({
-            action: 'api.request',
-            actorId: req.agent?._id || null,
-            actorName: req.agent?.name || req.apiClient?.name || '',
-            actorType,
-            targetType: 'route',
-            targetId: `${req.method} ${routePath}`,
-            success: res.statusCode < 400,
-            requestId: req.auditRequestId,
-            method: req.method,
-            path: `${req.baseUrl || ''}${routePath}`,
-            statusCode: res.statusCode,
-            durationMs: Date.now() - startedAt,
-            ip: req.ip || '',
-            userAgent: req.get('user-agent') || '',
-            details: {
-                params: sanitizeAuditValue(req.params || {}),
-                query: sanitizeAuditValue(req.query || {}),
-                body: sanitizeAuditValue(req.body || {}),
-                file: req.file ? { name: req.file.originalname, mimeType: req.file.mimetype, size: req.file.size } : undefined
-            }
-        }).catch(err => console.error('[AUDITORIA]', err.message));
-    });
-    next();
+  const startedAt = Date.now();
+  req.auditStartedAt = startedAt;
+  req.auditRequestId = req.get('x-request-id') || crypto.randomUUID();
+  res.setHeader('X-Request-Id', req.auditRequestId);
+  res.once('finish', () => {
+    if (req.auditRecorded) return;
+    const routePath = req.route?.path || req.path;
+    const actorType = req.agent ? 'agent' : req.apiClient ? 'api_client' : 'anonymous';
+    AuditLog.create({
+      action: 'api.request',
+      actorId: req.agent?._id || null,
+      actorName: req.agent?.name || req.apiClient?.name || '',
+      actorType,
+      targetType: 'route',
+      targetId: `${req.method} ${routePath}`,
+      success: res.statusCode < 400,
+      requestId: req.auditRequestId,
+      method: req.method,
+      path: `${req.baseUrl || ''}${routePath}`,
+      statusCode: res.statusCode,
+      durationMs: Date.now() - startedAt,
+      ip: req.ip || '',
+      userAgent: req.get('user-agent') || '',
+      details: {
+        params: sanitizeAuditValue(req.params || {}),
+        query: sanitizeAuditValue(req.query || {}),
+        body: sanitizeAuditValue(req.body || {}),
+        file: req.file
+          ? { name: req.file.originalname, mimeType: req.file.mimetype, size: req.file.size }
+          : undefined,
+      },
+    }).catch((err) => console.error('[AUDITORIA]', err.message));
+  });
+  next();
 });
 
 function publicAgent(agent) {
-    return { _id: agent._id, name: agent.name, corporateEmail: agent.corporateEmail, role: agent.role || 'agent', active: agent.active };
+  return {
+    _id: agent._id,
+    name: agent.name,
+    corporateEmail: agent.corporateEmail,
+    role: agent.role || 'agent',
+    active: agent.active,
+  };
 }
 
 function verifyPassword(password, agent) {
-    const candidate = crypto.scryptSync(password, agent.passwordSalt, 64);
-    const saved = Buffer.from(agent.passwordHash, 'hex');
-    return candidate.length === saved.length && crypto.timingSafeEqual(candidate, saved);
+  const candidate = crypto.scryptSync(password, agent.passwordSalt, 64);
+  const saved = Buffer.from(agent.passwordHash, 'hex');
+  return candidate.length === saved.length && crypto.timingSafeEqual(candidate, saved);
 }
 
 async function requireAgent(req, res, next) {
-    try {
-        const cookieToken = String(req.headers.cookie || '').split(';').map(value => value.trim()).find(value => value.startsWith('agent_session='))?.split('=').slice(1).join('=');
-        const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || decodeURIComponent(cookieToken || '');
-        const tokenHash = token ? hashSessionToken(token) : '';
-        const session = tokenHash ? await AgentSession.findOne({ tokenHash, expiresAt: { $gt: new Date() } }) : null;
-        if (!session) {
-            return res.status(401).json({ success: false, error: 'Sessao expirada. Entre novamente.' });
-        }
-        const agent = await Agent.findOne({ _id: session.agentId, active: true });
-        if (!agent) return res.status(401).json({ success: false, error: 'Agente nao encontrado ou inativo.' });
-        req.agent = agent;
-        req.agentTokenHash = tokenHash;
-        res.cookie('agent_session', token, { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production', maxAge: SESSION_DURATION_MS });
-        next();
-    } catch (err) {
-        res.status(401).json({ success: false, error: 'Sessao invalida.' });
+  try {
+    const cookieToken = String(req.headers.cookie || '')
+      .split(';')
+      .map((value) => value.trim())
+      .find((value) => value.startsWith('agent_session='))
+      ?.split('=')
+      .slice(1)
+      .join('=');
+    const token =
+      (req.headers.authorization || '').replace(/^Bearer\s+/i, '') ||
+      decodeURIComponent(cookieToken || '');
+    const tokenHash = token ? hashSessionToken(token) : '';
+    const session = tokenHash
+      ? await AgentSession.findOne({ tokenHash, expiresAt: { $gt: new Date() } })
+      : null;
+    if (!session) {
+      return res.status(401).json({ success: false, error: 'Sessao expirada. Entre novamente.' });
     }
+    const agent = await Agent.findOne({ _id: session.agentId, active: true });
+    if (!agent)
+      return res.status(401).json({ success: false, error: 'Agente nao encontrado ou inativo.' });
+    req.agent = agent;
+    req.agentTokenHash = tokenHash;
+    res.cookie('agent_session', token, {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: SESSION_DURATION_MS,
+    });
+    next();
+  } catch (err) {
+    res.status(401).json({ success: false, error: 'Sessao invalida.' });
+  }
 }
 
 function requireAdmin(req, res, next) {
-    if (req.agent?.role !== 'admin') return res.status(403).json({ success: false, error: 'Somente administradores podem cadastrar agentes.' });
-    next();
+  if (req.agent?.role !== 'admin')
+    return res
+      .status(403)
+      .json({ success: false, error: 'Somente administradores podem cadastrar agentes.' });
+  next();
 }
 
 // --- ROTAS DE AUTENTICAÇÃO E QR CODE ---
@@ -138,604 +178,793 @@ router.get('/qr', requireAgent, qrController.getQrCodeJson);
 router.get('/qr-image', requireAgent, qrController.getQrCodeImage);
 
 router.post('/auth/login', async (req, res) => {
-    try {
-        const corporateEmail = (req.body.corporateEmail || '').trim().toLowerCase();
-        const password = req.body.password || '';
-        const agent = await Agent.findOne({ corporateEmail, active: true }).select('+passwordHash +passwordSalt');
-        if (!agent || !verifyPassword(password, agent)) {
-            await audit(req, 'auth.login_failed', { success: false, details: { corporateEmail } });
-            return res.status(401).json({ success: false, error: 'Usuario ou senha invalidos.' });
-        }
-        const token = crypto.randomBytes(32).toString('hex');
-        await AgentSession.create({ tokenHash: hashSessionToken(token), agentId: agent._id, expiresAt: new Date(Date.now() + SESSION_DURATION_MS) });
-        await audit(req, 'auth.login', { actorId: agent._id, actorName: agent.name });
-        res.cookie('agent_session', token, { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production', maxAge: SESSION_DURATION_MS });
-        res.json({ success: true, token, data: publicAgent(agent) });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+  try {
+    const corporateEmail = (req.body.corporateEmail || '').trim().toLowerCase();
+    const password = req.body.password || '';
+    const agent = await Agent.findOne({ corporateEmail, active: true }).select(
+      '+passwordHash +passwordSalt',
+    );
+    if (!agent || !verifyPassword(password, agent)) {
+      await audit(req, 'auth.login_failed', { success: false, details: { corporateEmail } });
+      return res.status(401).json({ success: false, error: 'Usuario ou senha invalidos.' });
     }
+    const token = crypto.randomBytes(32).toString('hex');
+    await AgentSession.create({
+      tokenHash: hashSessionToken(token),
+      agentId: agent._id,
+      expiresAt: new Date(Date.now() + SESSION_DURATION_MS),
+    });
+    await audit(req, 'auth.login', { actorId: agent._id, actorName: agent.name });
+    res.cookie('agent_session', token, {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: SESSION_DURATION_MS,
+    });
+    res.json({ success: true, token, data: publicAgent(agent) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
-router.get('/auth/me', requireAgent, (req, res) => res.json({ success: true, data: publicAgent(req.agent) }));
+router.get('/auth/me', requireAgent, (req, res) =>
+  res.json({ success: true, data: publicAgent(req.agent) }),
+);
 
 router.post('/auth/logout', requireAgent, async (req, res) => {
-    await AgentSession.deleteOne({ tokenHash: req.agentTokenHash });
-    await audit(req, 'auth.logout');
-    res.clearCookie('agent_session', { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production' });
-    res.json({ success: true });
+  await AgentSession.deleteOne({ tokenHash: req.agentTokenHash });
+  await audit(req, 'auth.logout');
+  res.clearCookie('agent_session', {
+    httpOnly: true,
+    sameSite: 'strict',
+    secure: process.env.NODE_ENV === 'production',
+  });
+  res.json({ success: true });
 });
 
 router.patch('/auth/profile', requireAgent, async (req, res) => {
-    try {
-        const name = (req.body.name || '').trim();
-        const currentPassword = req.body.currentPassword || '';
-        const newPassword = req.body.newPassword || '';
-        if (!name || !currentPassword) return res.status(400).json({ success: false, error: 'Informe o nome e a senha atual.' });
-        const agent = await Agent.findById(req.agent._id).select('+passwordHash +passwordSalt');
-        if (!agent || !verifyPassword(currentPassword, agent)) return res.status(401).json({ success: false, error: 'Senha atual incorreta.' });
-        if (newPassword && newPassword.length < 6) return res.status(400).json({ success: false, error: 'A nova senha deve ter pelo menos 6 caracteres.' });
-        agent.name = name;
-        if (newPassword) {
-            agent.passwordSalt = crypto.randomBytes(16).toString('hex');
-            agent.passwordHash = crypto.scryptSync(newPassword, agent.passwordSalt, 64).toString('hex');
-        }
-        await agent.save();
-        res.json({ success: true, data: publicAgent(agent) });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+  try {
+    const name = (req.body.name || '').trim();
+    const currentPassword = req.body.currentPassword || '';
+    const newPassword = req.body.newPassword || '';
+    if (!name || !currentPassword)
+      return res.status(400).json({ success: false, error: 'Informe o nome e a senha atual.' });
+    const agent = await Agent.findById(req.agent._id).select('+passwordHash +passwordSalt');
+    if (!agent || !verifyPassword(currentPassword, agent))
+      return res.status(401).json({ success: false, error: 'Senha atual incorreta.' });
+    if (newPassword && newPassword.length < 6)
+      return res
+        .status(400)
+        .json({ success: false, error: 'A nova senha deve ter pelo menos 6 caracteres.' });
+    agent.name = name;
+    if (newPassword) {
+      agent.passwordSalt = crypto.randomBytes(16).toString('hex');
+      agent.passwordHash = crypto.scryptSync(newPassword, agent.passwordSalt, 64).toString('hex');
     }
+    await agent.save();
+    res.json({ success: true, data: publicAgent(agent) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.get('/agents', requireAgent, requireAdmin, async (req, res) => {
-    try {
-        const agents = await Agent.find({}).sort({ active: -1, name: 1 });
-        res.json({ success: true, data: agents });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
+  try {
+    const agents = await Agent.find({}).sort({ active: -1, name: 1 });
+    res.json({ success: true, data: agents });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.post('/agents', requireAgent, requireAdmin, async (req, res) => {
-    try {
-        const name = (req.body.name || '').trim();
-        const corporateEmail = (req.body.corporateEmail || '').trim().toLowerCase();
-        const password = req.body.password || '';
+  try {
+    const name = (req.body.name || '').trim();
+    const corporateEmail = (req.body.corporateEmail || '').trim().toLowerCase();
+    const password = req.body.password || '';
 
-        if (!name || !corporateEmail || password.length < 6) {
-            return res.status(400).json({ success: false, error: 'Preencha os campos e use uma senha com pelo menos 6 caracteres.' });
-        }
-
-        const passwordSalt = crypto.randomBytes(16).toString('hex');
-        const passwordHash = crypto.scryptSync(password, passwordSalt, 64).toString('hex');
-        const role = req.body.role === 'admin' ? 'admin' : 'agent';
-        const agent = await Agent.create({ name, corporateEmail, passwordSalt, passwordHash, role });
-        await audit(req, 'agent.create', { targetType: 'agent', targetId: agent._id, details: { corporateEmail, role } });
-
-        res.status(201).json({
-            success: true,
-            data: publicAgent(agent)
-        });
-    } catch (err) {
-        if (err?.code === 11000) {
-            return res.status(409).json({ success: false, error: 'Este email corporativo ja esta cadastrado.' });
-        }
-        res.status(500).json({ success: false, error: err.message });
+    if (!name || !corporateEmail || password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'Preencha os campos e use uma senha com pelo menos 6 caracteres.',
+      });
     }
+
+    const passwordSalt = crypto.randomBytes(16).toString('hex');
+    const passwordHash = crypto.scryptSync(password, passwordSalt, 64).toString('hex');
+    const role = req.body.role === 'admin' ? 'admin' : 'agent';
+    const agent = await Agent.create({ name, corporateEmail, passwordSalt, passwordHash, role });
+    await audit(req, 'agent.create', {
+      targetType: 'agent',
+      targetId: agent._id,
+      details: { corporateEmail, role },
+    });
+
+    res.status(201).json({
+      success: true,
+      data: publicAgent(agent),
+    });
+  } catch (err) {
+    if (err?.code === 11000) {
+      return res
+        .status(409)
+        .json({ success: false, error: 'Este email corporativo ja esta cadastrado.' });
+    }
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.patch('/agents/:agentId/status', requireAgent, requireAdmin, async (req, res) => {
-    try {
-        const active = req.body.active;
-        if (typeof active !== 'boolean') {
-            return res.status(400).json({ success: false, error: 'Informe um status valido.' });
-        }
-        if (!active && req.agent._id.toString() === req.params.agentId) {
-            return res.status(400).json({ success: false, error: 'Voce nao pode bloquear sua propria conta.' });
-        }
-
-        const agent = await Agent.findByIdAndUpdate(req.params.agentId, { active }, { returnDocument: 'after' });
-        if (!agent) return res.status(404).json({ success: false, error: 'Agente nao encontrado.' });
-
-        if (!active) {
-            await AgentSession.deleteMany({ agentId: agent._id });
-        }
-        await audit(req, active ? 'agent.enable' : 'agent.disable', { targetType: 'agent', targetId: agent._id });
-        res.json({ success: true, data: publicAgent(agent) });
-    } catch (err) {
-        res.status(400).json({ success: false, error: 'Nao foi possivel alterar o status do agente.' });
+  try {
+    const active = req.body.active;
+    if (typeof active !== 'boolean') {
+      return res.status(400).json({ success: false, error: 'Informe um status valido.' });
     }
+    if (!active && req.agent._id.toString() === req.params.agentId) {
+      return res
+        .status(400)
+        .json({ success: false, error: 'Voce nao pode bloquear sua propria conta.' });
+    }
+
+    const agent = await Agent.findByIdAndUpdate(
+      req.params.agentId,
+      { active },
+      { returnDocument: 'after' },
+    );
+    if (!agent) return res.status(404).json({ success: false, error: 'Agente nao encontrado.' });
+
+    if (!active) {
+      await AgentSession.deleteMany({ agentId: agent._id });
+    }
+    await audit(req, active ? 'agent.enable' : 'agent.disable', {
+      targetType: 'agent',
+      targetId: agent._id,
+    });
+    res.json({ success: true, data: publicAgent(agent) });
+  } catch (err) {
+    res.status(400).json({ success: false, error: 'Nao foi possivel alterar o status do agente.' });
+  }
 });
 
 // --- ROTA DE ENVIO EXTERNO (MANTÉM CHAVE DE API) ---
 function normalizeOrigin(value) {
-    const url = new URL(String(value || '').trim());
-    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('URL inválida.');
-    return url.origin;
+  const url = new URL(String(value || '').trim());
+  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('URL inválida.');
+  return url.origin;
 }
 
 function publicApiClient(client) {
-    return { _id: client._id, name: client.name, allowedOrigin: client.allowedOrigin, keyPrefix: client.keyPrefix, active: client.active, createdAt: client.createdAt, lastUsedAt: client.lastUsedAt };
+  return {
+    _id: client._id,
+    name: client.name,
+    allowedOrigin: client.allowedOrigin,
+    keyPrefix: client.keyPrefix,
+    active: client.active,
+    createdAt: client.createdAt,
+    lastUsedAt: client.lastUsedAt,
+  };
 }
 
 router.get('/api-clients', requireAgent, requireAdmin, async (req, res) => {
-    const clients = await ApiClient.find({}).sort({ active: -1, name: 1 });
-    res.json({ success: true, data: clients.map(publicApiClient) });
+  const clients = await ApiClient.find({}).sort({ active: -1, name: 1 });
+  res.json({ success: true, data: clients.map(publicApiClient) });
 });
 
 router.post('/api-clients', requireAgent, requireAdmin, async (req, res) => {
-    try {
-        const name = String(req.body.name || '').trim();
-        if (!name) return res.status(400).json({ success: false, error: 'Informe o nome do site.' });
-        const allowedOrigin = normalizeOrigin(req.body.url);
-        const apiKey = `sng_${crypto.randomBytes(32).toString('hex')}`;
-        const client = await ApiClient.create({ name, allowedOrigin, keyHash: hashApiKey(apiKey), keyPrefix: `${apiKey.slice(0, 12)}...`, createdBy: req.agent._id });
-        await audit(req, 'api_client.create', { targetType: 'api_client', targetId: client._id, details: { name, allowedOrigin } });
-        res.status(201).json({ success: true, data: publicApiClient(client), apiKey });
-    } catch (err) {
-        res.status(400).json({ success: false, error: err.message || 'Não foi possível criar a integração.' });
-    }
+  try {
+    const name = String(req.body.name || '').trim();
+    if (!name) return res.status(400).json({ success: false, error: 'Informe o nome do site.' });
+    const allowedOrigin = normalizeOrigin(req.body.url);
+    const apiKey = `sng_${crypto.randomBytes(32).toString('hex')}`;
+    const client = await ApiClient.create({
+      name,
+      allowedOrigin,
+      keyHash: hashApiKey(apiKey),
+      keyPrefix: `${apiKey.slice(0, 12)}...`,
+      createdBy: req.agent._id,
+    });
+    await audit(req, 'api_client.create', {
+      targetType: 'api_client',
+      targetId: client._id,
+      details: { name, allowedOrigin },
+    });
+    res.status(201).json({ success: true, data: publicApiClient(client), apiKey });
+  } catch (err) {
+    res
+      .status(400)
+      .json({ success: false, error: err.message || 'Não foi possível criar a integração.' });
+  }
 });
 
 router.patch('/api-clients/:clientId/status', requireAgent, requireAdmin, async (req, res) => {
-    if (typeof req.body.active !== 'boolean') return res.status(400).json({ success: false, error: 'Status inválido.' });
-    const client = await ApiClient.findByIdAndUpdate(req.params.clientId, { active: req.body.active }, { returnDocument: 'after' });
-    if (!client) return res.status(404).json({ success: false, error: 'Integração não encontrada.' });
-    await audit(req, req.body.active ? 'api_client.enable' : 'api_client.disable', { targetType: 'api_client', targetId: client._id });
-    res.json({ success: true, data: publicApiClient(client) });
+  if (typeof req.body.active !== 'boolean')
+    return res.status(400).json({ success: false, error: 'Status inválido.' });
+  const client = await ApiClient.findByIdAndUpdate(
+    req.params.clientId,
+    { active: req.body.active },
+    { returnDocument: 'after' },
+  );
+  if (!client) return res.status(404).json({ success: false, error: 'Integração não encontrada.' });
+  await audit(req, req.body.active ? 'api_client.enable' : 'api_client.disable', {
+    targetType: 'api_client',
+    targetId: client._id,
+  });
+  res.json({ success: true, data: publicApiClient(client) });
 });
 
 router.post('/api-clients/:clientId/rotate', requireAgent, requireAdmin, async (req, res) => {
-    const apiKey = `sng_${crypto.randomBytes(32).toString('hex')}`;
-    const client = await ApiClient.findByIdAndUpdate(req.params.clientId, { keyHash: hashApiKey(apiKey), keyPrefix: `${apiKey.slice(0, 12)}...`, active: true }, { returnDocument: 'after' });
-    if (!client) return res.status(404).json({ success: false, error: 'Integração não encontrada.' });
-    await audit(req, 'api_client.rotate', { targetType: 'api_client', targetId: client._id });
-    res.json({ success: true, data: publicApiClient(client), apiKey });
+  const apiKey = `sng_${crypto.randomBytes(32).toString('hex')}`;
+  const client = await ApiClient.findByIdAndUpdate(
+    req.params.clientId,
+    { keyHash: hashApiKey(apiKey), keyPrefix: `${apiKey.slice(0, 12)}...`, active: true },
+    { returnDocument: 'after' },
+  );
+  if (!client) return res.status(404).json({ success: false, error: 'Integração não encontrada.' });
+  await audit(req, 'api_client.rotate', { targetType: 'api_client', targetId: client._id });
+  res.json({ success: true, data: publicApiClient(client), apiKey });
 });
 
 router.delete('/api-clients/:clientId', requireAgent, requireAdmin, async (req, res) => {
-    const client = await ApiClient.findByIdAndDelete(req.params.clientId);
-    if (!client) return res.status(404).json({ success: false, error: 'Integração não encontrada.' });
-    await audit(req, 'api_client.delete', { targetType: 'api_client', targetId: client._id, details: { name: client.name } });
-    res.json({ success: true, message: 'Integração e chave excluídas permanentemente.' });
+  const client = await ApiClient.findByIdAndDelete(req.params.clientId);
+  if (!client) return res.status(404).json({ success: false, error: 'Integração não encontrada.' });
+  await audit(req, 'api_client.delete', {
+    targetType: 'api_client',
+    targetId: client._id,
+    details: { name: client.name },
+  });
+  res.json({ success: true, message: 'Integração e chave excluídas permanentemente.' });
 });
 
 router.get('/audit-logs', requireAgent, requireAdmin, async (req, res) => {
-    const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || '100', 10)));
-    const logs = await AuditLog.find({}).sort({ createdAt: -1 }).limit(limit);
-    res.json({ success: true, data: logs });
+  const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || '100', 10)));
+  const logs = await AuditLog.find({}).sort({ createdAt: -1 }).limit(limit);
+  res.json({ success: true, data: logs });
 });
 
-router.post('/send-message', checkApiKey, upload.single('file'), messageController.handleSendMessage);
+router.post(
+  '/send-message',
+  checkApiKey,
+  upload.single('file'),
+  messageController.handleSendMessage,
+);
 
 // O painel usa a sessao autenticada; o agentId vem sempre do servidor.
 router.post(
-    '/panel/send-message',
-    requireAgent,
-    upload.single('file'),
-    (req, res, next) => {
-        req.body.agentId = req.agent._id.toString();
-        next();
-    },
-    messageController.handleSendMessage
+  '/panel/send-message',
+  requireAgent,
+  upload.single('file'),
+  (req, res, next) => {
+    req.body.agentId = req.agent._id.toString();
+    next();
+  },
+  messageController.handleSendMessage,
 );
 
 // --- NOVA ROTA: LISTAR CHATS, NOMES E GRUPOS ---
 router.get('/whatsapp/chats', requireAgent, async (req, res) => {
-    try {
-        const chats = await whatsappService.getAllChats();
-        res.json({ success: true, data: chats });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
+  try {
+    const chats = await whatsappService.getAllChats();
+    res.json({ success: true, data: chats });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.get('/whatsapp/presence', requireAgent, async (req, res) => {
-    const contactId = String(req.query.contactId || '');
-    const phoneNumber = String(req.query.phoneNumber || '');
-    if (!contactId) return res.status(400).json({ success: false, error: 'Informe o contato.' });
+  const contactId = String(req.query.contactId || '');
+  const phoneNumber = String(req.query.phoneNumber || '');
+  if (!contactId) return res.status(400).json({ success: false, error: 'Informe o contato.' });
 
-    const data = await whatsappService.getContactPresence(contactId, phoneNumber);
-    res.json({ success: true, data });
+  const data = await whatsappService.getContactPresence(contactId, phoneNumber);
+  res.json({ success: true, data });
 });
 
 router.post('/whatsapp/sync-history', requireAgent, requireAdmin, async (req, res) => {
-    try {
-        const data = await whatsappService.syncRecentMessages();
-        res.json({ success: true, data });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
+  try {
+    const data = await whatsappService.syncRecentMessages();
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // --- ROTAS DO PAINEL INTERNO ---
 
 router.get('/tickets', requireAgent, async (req, res) => {
-    try {
-        const { status } = req.query; 
-        const filter = status ? { status } : {};
-        const tickets = await Chat.find(filter).sort({ lastMessageAt: -1, updatedAt: -1 });
+  try {
+    const { status } = req.query;
+    const filter = status ? { status } : {};
+    const tickets = await Chat.find(filter).sort({ lastMessageAt: -1, updatedAt: -1 });
 
-        if (tickets.length) {
-            const latestMessages = await Message.aggregate([
-                { $match: { ticketId: { $in: tickets.map(chat => chat._id) }, $or: [{ isInternalEvent: { $ne: true } }, { internalAction: /^call_/ }] } },
-                { $sort: { timestamp: -1 } },
-                { $group: { _id: '$ticketId', lastMessageAt: { $first: '$timestamp' }, lastMessage: { $first: '$body' } } }
-            ]);
-            const latestByChat = new Map(latestMessages.map(item => [item._id.toString(), item]));
-            const updates = [];
-            for (const chat of tickets) {
-                const latest = latestByChat.get(chat._id.toString());
-                if (!latest?.lastMessageAt) continue;
-                const timestampChanged = new Date(chat.lastMessageAt || 0).getTime() !== new Date(latest.lastMessageAt).getTime();
-                const bodyChanged = chat.lastMessage !== latest.lastMessage;
-                chat.lastMessageAt = latest.lastMessageAt;
-                chat.lastMessage = latest.lastMessage;
-                if (timestampChanged || bodyChanged) updates.push({ updateOne: { filter: { _id: chat._id }, update: { $set: { lastMessageAt: latest.lastMessageAt, lastMessage: latest.lastMessage } } } });
-            }
-            if (updates.length) await Chat.bulkWrite(updates);
-        }
-
-        const genericGroupNames = new Set(['', 'Grupo', 'Grupo sem nome', 'Grupo do WhatsApp']);
-        await Promise.all(tickets.map(async (chat) => {
-            const plainId = (chat.phoneNumber || '').replace(/\D/g, '');
-            const looksLikeGroupId = plainId.startsWith('120363') && plainId.length >= 17;
-            const needsGroupRepair = chat.isGroup
-                ? genericGroupNames.has((chat.contactName || '').trim())
-                : looksLikeGroupId;
-
-            if (!needsGroupRepair) return;
-
-            const savedId = chat.whatsappId || chat.phoneNumber;
-            const groupId = savedId.includes('@g.us')
-                ? savedId
-                : `${plainId}@g.us`;
-
-            const metadata = await whatsappService.getChatMetadata(groupId);
-            if (!metadata?.name) return;
-
-            chat.contactName = metadata.name;
-            chat.whatsappId = metadata.id || groupId;
-            chat.isGroup = true;
-            if (metadata.profilePicUrl) chat.profilePicUrl = metadata.profilePicUrl;
-            await chat.save();
-        }));
-
-        tickets.sort((a, b) => new Date(b.lastMessageAt || b.updatedAt || 0) - new Date(a.lastMessageAt || a.updatedAt || 0));
-        res.json({ success: true, data: tickets });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+    if (tickets.length) {
+      const latestMessages = await Message.aggregate([
+        {
+          $match: {
+            ticketId: { $in: tickets.map((chat) => chat._id) },
+            $or: [{ isInternalEvent: { $ne: true } }, { internalAction: /^call_/ }],
+          },
+        },
+        { $sort: { timestamp: -1 } },
+        {
+          $group: {
+            _id: '$ticketId',
+            lastMessageAt: { $first: '$timestamp' },
+            lastMessage: { $first: '$body' },
+          },
+        },
+      ]);
+      const latestByChat = new Map(latestMessages.map((item) => [item._id.toString(), item]));
+      const updates = [];
+      for (const chat of tickets) {
+        const latest = latestByChat.get(chat._id.toString());
+        if (!latest?.lastMessageAt) continue;
+        const timestampChanged =
+          new Date(chat.lastMessageAt || 0).getTime() !== new Date(latest.lastMessageAt).getTime();
+        const bodyChanged = chat.lastMessage !== latest.lastMessage;
+        chat.lastMessageAt = latest.lastMessageAt;
+        chat.lastMessage = latest.lastMessage;
+        if (timestampChanged || bodyChanged)
+          updates.push({
+            updateOne: {
+              filter: { _id: chat._id },
+              update: {
+                $set: { lastMessageAt: latest.lastMessageAt, lastMessage: latest.lastMessage },
+              },
+            },
+          });
+      }
+      if (updates.length) await Chat.bulkWrite(updates);
     }
+
+    const genericGroupNames = new Set(['', 'Grupo', 'Grupo sem nome', 'Grupo do WhatsApp']);
+    await Promise.all(
+      tickets.map(async (chat) => {
+        const plainId = (chat.phoneNumber || '').replace(/\D/g, '');
+        const looksLikeGroupId = plainId.startsWith('120363') && plainId.length >= 17;
+        const needsGroupRepair = chat.isGroup
+          ? genericGroupNames.has((chat.contactName || '').trim())
+          : looksLikeGroupId;
+
+        if (!needsGroupRepair) return;
+
+        const savedId = chat.whatsappId || chat.phoneNumber;
+        const groupId = savedId.includes('@g.us') ? savedId : `${plainId}@g.us`;
+
+        const metadata = await whatsappService.getChatMetadata(groupId);
+        if (!metadata?.name) return;
+
+        chat.contactName = metadata.name;
+        chat.whatsappId = metadata.id || groupId;
+        chat.isGroup = true;
+        if (metadata.profilePicUrl) chat.profilePicUrl = metadata.profilePicUrl;
+        await chat.save();
+      }),
+    );
+
+    tickets.sort(
+      (a, b) =>
+        new Date(b.lastMessageAt || b.updatedAt || 0) -
+        new Date(a.lastMessageAt || a.updatedAt || 0),
+    );
+    res.json({ success: true, data: tickets });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.get('/tickets/:ticketId/members', requireAgent, async (req, res) => {
-    try {
-        const chat = await Chat.findById(req.params.ticketId);
-        if (!chat) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
-        if (!chat.isGroup) return res.status(400).json({ success: false, error: 'Esta conversa não é um grupo.' });
-        const data = await whatsappService.getGroupMembers(chat.whatsappId || chat.phoneNumber);
-        res.json({ success: true, data });
-    } catch (err) {
-        res.status(503).json({ success: false, error: err.message || 'Não foi possível carregar os membros.' });
-    }
+  try {
+    const chat = await Chat.findById(req.params.ticketId);
+    if (!chat) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
+    if (!chat.isGroup)
+      return res.status(400).json({ success: false, error: 'Esta conversa não é um grupo.' });
+    const data = await whatsappService.getGroupMembers(chat.whatsappId || chat.phoneNumber);
+    res.json({ success: true, data });
+  } catch (err) {
+    res
+      .status(503)
+      .json({ success: false, error: err.message || 'Não foi possível carregar os membros.' });
+  }
 });
 
 router.get('/tickets/:ticketId/messages', requireAgent, async (req, res) => {
-    try {
-        const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || '100', 10)));
-        const filter = { ticketId: req.params.ticketId };
-        if (req.query.before) {
-            const before = new Date(req.query.before);
-            if (!Number.isNaN(before.getTime())) filter.timestamp = { $lt: before };
-        }
-        const descending = await Message.find(filter).sort({ timestamp: -1 }).limit(limit + 1);
-        const hasMore = descending.length > limit;
-        const hydratedMessages = await whatsappService.resolveStoredMentions(descending.slice(0, limit).reverse());
-        const messages = whatsappService.dedupeCallEvents(hydratedMessages);
-        res.json({ success: true, data: messages, meta: { hasMore, limit } });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+  try {
+    const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || '100', 10)));
+    const filter = { ticketId: req.params.ticketId };
+    if (req.query.before) {
+      const before = new Date(req.query.before);
+      if (!Number.isNaN(before.getTime())) filter.timestamp = { $lt: before };
     }
+    const descending = await Message.find(filter)
+      .sort({ timestamp: -1 })
+      .limit(limit + 1);
+    const hasMore = descending.length > limit;
+    const hydratedMessages = await whatsappService.resolveStoredMentions(
+      descending.slice(0, limit).reverse(),
+    );
+    const messages = whatsappService.dedupeCallEvents(hydratedMessages);
+    res.json({ success: true, data: messages, meta: { hasMore, limit } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.post('/tickets/start', requireAgent, async (req, res) => {
-    try {
-        const phoneNumber = String(req.body?.phoneNumber || '').replace(/\D/g, '');
-        if (phoneNumber.length < 10 || phoneNumber.length > 15) {
-            return res.status(400).json({ success: false, error: 'Informe o numero com DDD e codigo do pais.' });
-        }
-
-        const contact = await whatsappService.getContactMetadata(phoneNumber);
-        const chat = await Chat.findOneAndUpdate(
-            { $or: [{ phoneNumber: contact.phoneNumber }, { whatsappId: contact.whatsappId }] },
-            {
-                $setOnInsert: {
-                    isGroup: false,
-                    isTemporary: true,
-                    status: 'pending',
-                    lastMessage: '',
-                    lastMessageAt: null
-                },
-                $set: {
-                    phoneNumber: contact.phoneNumber,
-                    whatsappId: contact.whatsappId,
-                    contactName: contact.contactName,
-                    ...(contact.profilePicUrl ? { profilePicUrl: contact.profilePicUrl } : {}),
-                    updatedAt: new Date()
-                }
-            },
-            { upsert: true, returnDocument: 'after' }
-        );
-
-        const hasMessages = await Message.exists({
-            ticketId: chat._id,
-            isInternalEvent: { $ne: true }
-        });
-        chat.isTemporary = !hasMessages;
-        await chat.save();
-
-        res.json({
-            success: true,
-            data: { ...chat.toObject(), name: contact.name },
-            whatsappPayload: contact.rawPayload
-        });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+  try {
+    const phoneNumber = String(req.body?.phoneNumber || '').replace(/\D/g, '');
+    if (phoneNumber.length < 10 || phoneNumber.length > 15) {
+      return res
+        .status(400)
+        .json({ success: false, error: 'Informe o numero com DDD e codigo do pais.' });
     }
+
+    const contact = await whatsappService.getContactMetadata(phoneNumber);
+    const chat = await Chat.findOneAndUpdate(
+      { $or: [{ phoneNumber: contact.phoneNumber }, { whatsappId: contact.whatsappId }] },
+      {
+        $setOnInsert: {
+          isGroup: false,
+          isTemporary: true,
+          status: 'pending',
+          lastMessage: '',
+          lastMessageAt: null,
+        },
+        $set: {
+          phoneNumber: contact.phoneNumber,
+          whatsappId: contact.whatsappId,
+          contactName: contact.contactName,
+          ...(contact.profilePicUrl ? { profilePicUrl: contact.profilePicUrl } : {}),
+          updatedAt: new Date(),
+        },
+      },
+      { upsert: true, returnDocument: 'after' },
+    );
+
+    const hasMessages = await Message.exists({
+      ticketId: chat._id,
+      isInternalEvent: { $ne: true },
+    });
+    chat.isTemporary = !hasMessages;
+    await chat.save();
+
+    res.json({
+      success: true,
+      data: { ...chat.toObject(), name: contact.name },
+      whatsappPayload: contact.rawPayload,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.post('/tickets/discard-temporary', requireAgent, async (req, res) => {
-    try {
-        const chat = await Chat.findOne({ _id: req.body?.ticketId, isTemporary: true });
-        if (!chat) return res.json({ success: true, discarded: false });
+  try {
+    const chat = await Chat.findOne({ _id: req.body?.ticketId, isTemporary: true });
+    if (!chat) return res.json({ success: true, discarded: false });
 
-        const hasMessages = await Message.exists({ ticketId: chat._id, isInternalEvent: { $ne: true } });
-        if (hasMessages) {
-            chat.isTemporary = false;
-            await chat.save();
-            return res.json({ success: true, discarded: false });
-        }
-
-        await Chat.deleteOne({ _id: chat._id, isTemporary: true });
-        res.json({ success: true, discarded: true });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+    const hasMessages = await Message.exists({
+      ticketId: chat._id,
+      isInternalEvent: { $ne: true },
+    });
+    if (hasMessages) {
+      chat.isTemporary = false;
+      await chat.save();
+      return res.json({ success: true, discarded: false });
     }
+
+    await Chat.deleteOne({ _id: chat._id, isTemporary: true });
+    res.json({ success: true, discarded: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.get('/messages/:messageId/media', requireAgent, async (req, res) => {
-    try {
-        const message = await Message.findById(req.params.messageId);
-        if (!message?.hasMedia || !message.mediaPath) return res.status(404).end();
+  try {
+    const message = await Message.findById(req.params.messageId);
+    if (!message?.hasMedia || !message.mediaPath) return res.status(404).end();
 
-        const mediaDirectory = path.resolve(__dirname, '..', '..', '..', 'storage', 'media');
-        const absolutePath = path.resolve(mediaDirectory, message.mediaPath);
-        if (!absolutePath.startsWith(`${mediaDirectory}${path.sep}`)) return res.status(400).end();
+    const mediaDirectory = path.resolve(__dirname, '..', '..', '..', 'storage', 'media');
+    const absolutePath = path.resolve(mediaDirectory, message.mediaPath);
+    if (!absolutePath.startsWith(`${mediaDirectory}${path.sep}`)) return res.status(400).end();
 
-        res.setHeader('Content-Type', message.mediaMimeType || 'application/octet-stream');
-        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(message.mediaFileName || 'arquivo')}"`);
-        res.sendFile(absolutePath);
-    } catch (err) {
-        res.status(404).end();
-    }
+    res.setHeader('Content-Type', message.mediaMimeType || 'application/octet-stream');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${encodeURIComponent(message.mediaFileName || 'arquivo')}"`,
+    );
+    res.sendFile(absolutePath);
+  } catch (err) {
+    res.status(404).end();
+  }
 });
 
 router.patch('/messages/:messageId', requireAgent, async (req, res) => {
-    try {
-        const data = await whatsappService.editMessage(req.params.messageId, req.body?.body);
-        await audit(req, 'message.edit', {
-            targetType: 'message',
-            targetId: req.params.messageId,
-            details: { ticketId: data.ticketId }
-        });
-        res.json({ success: true, data });
-    } catch (err) {
-        await audit(req, 'message.edit', {
-            targetType: 'message',
-            targetId: req.params.messageId,
-            success: false,
-            details: { error: err.message }
-        });
-        res.status(400).json({ success: false, error: err.message || 'Nao foi possivel editar a mensagem.' });
-    }
+  try {
+    const data = await whatsappService.editMessage(req.params.messageId, req.body?.body);
+    await audit(req, 'message.edit', {
+      targetType: 'message',
+      targetId: req.params.messageId,
+      details: { ticketId: data.ticketId },
+    });
+    res.json({ success: true, data });
+  } catch (err) {
+    await audit(req, 'message.edit', {
+      targetType: 'message',
+      targetId: req.params.messageId,
+      success: false,
+      details: { error: err.message },
+    });
+    res
+      .status(400)
+      .json({ success: false, error: err.message || 'Nao foi possivel editar a mensagem.' });
+  }
 });
 
 router.delete('/messages/:messageId/everyone', requireAgent, async (req, res) => {
-    try {
-        const data = await whatsappService.revokeMessage(req.params.messageId);
-        await audit(req, 'message.revoke', {
-            targetType: 'message',
-            targetId: req.params.messageId,
-            details: { ticketId: data.ticketId }
-        });
-        res.json({ success: true, data });
-    } catch (err) {
-        await audit(req, 'message.revoke', {
-            targetType: 'message',
-            targetId: req.params.messageId,
-            success: false,
-            details: { error: err.message }
-        });
-        res.status(400).json({ success: false, error: err.message || 'Nao foi possivel apagar a mensagem.' });
-    }
+  try {
+    const data = await whatsappService.revokeMessage(req.params.messageId);
+    await audit(req, 'message.revoke', {
+      targetType: 'message',
+      targetId: req.params.messageId,
+      details: { ticketId: data.ticketId },
+    });
+    res.json({ success: true, data });
+  } catch (err) {
+    await audit(req, 'message.revoke', {
+      targetType: 'message',
+      targetId: req.params.messageId,
+      success: false,
+      details: { error: err.message },
+    });
+    res
+      .status(400)
+      .json({ success: false, error: err.message || 'Nao foi possivel apagar a mensagem.' });
+  }
 });
 
 router.get('/tickets/:ticketId/profile-picture', requireAgent, async (req, res) => {
-    try {
-        const chat = await Chat.findById(req.params.ticketId);
-        if (!chat) {
-            return res.status(404).end();
-        }
-
-        const picture = await whatsappService.getProfilePicture(
-            chat.whatsappId || chat.phoneNumber,
-            chat.isGroup,
-            chat.profilePicUrl
-        );
-        // Ausencia de foto e um estado normal; 204 evita tratar o avatar padrao como erro no frontend.
-        if (!picture) return res.status(204).end();
-
-        res.setHeader('Cache-Control', 'private, max-age=300');
-        res.type(picture.contentType).send(picture.buffer);
-    } catch (err) {
-        res.status(404).end();
+  try {
+    const chat = await Chat.findById(req.params.ticketId);
+    if (!chat) {
+      return res.status(404).end();
     }
+
+    const picture = await whatsappService.getProfilePicture(
+      chat.whatsappId || chat.phoneNumber,
+      chat.isGroup,
+      chat.profilePicUrl,
+    );
+    // Ausencia de foto e um estado normal; 204 evita tratar o avatar padrao como erro no frontend.
+    if (!picture) return res.status(204).end();
+
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.type(picture.contentType).send(picture.buffer);
+  } catch (err) {
+    res.status(404).end();
+  }
 });
 
 router.post('/tickets/claim', requireAgent, async (req, res) => {
-    try {
-        const { ticketId } = req.body;
-        const chat = await Chat.findOneAndUpdate(
-            { _id: ticketId, status: { $ne: 'open' } },
-            { assignedAgent: req.agent._id.toString(), status: 'open', updatedAt: new Date() },
-            { returnDocument: 'after' }
-        );
+  try {
+    const { ticketId } = req.body;
+    const chat = await Chat.findOneAndUpdate(
+      { _id: ticketId, status: { $ne: 'open' } },
+      { assignedAgent: req.agent._id.toString(), status: 'open', updatedAt: new Date() },
+      { returnDocument: 'after' },
+    );
 
-        if (!chat) {
-            const current = await Chat.findById(ticketId);
-            if (!current) return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
-            return res.status(409).json({ success: false, error: 'Este atendimento já foi assumido por outro agente.', data: current });
-        }
-
-        await whatsappService.recordChatEvent(chat, req.agent, 'claimed');
-        await audit(req, 'chat.claim', { targetType: 'chat', targetId: chat._id });
-        res.json({ success: true, message: 'Atendimento assumido!', data: chat });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+    if (!chat) {
+      const current = await Chat.findById(ticketId);
+      if (!current)
+        return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
+      return res.status(409).json({
+        success: false,
+        error: 'Este atendimento já foi assumido por outro agente.',
+        data: current,
+      });
     }
+
+    await whatsappService.recordChatEvent(chat, req.agent, 'claimed');
+    await audit(req, 'chat.claim', { targetType: 'chat', targetId: chat._id });
+    res.json({ success: true, message: 'Atendimento assumido!', data: chat });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.post('/tickets/close', requireAgent, async (req, res) => {
-    try {
-        const { ticketId } = req.body;
-        const chat = await Chat.findByIdAndUpdate(
-            ticketId,
-            { status: 'closed', updatedAt: new Date() },
-            { returnDocument: 'after' }
-        );
+  try {
+    const { ticketId } = req.body;
+    const chat = await Chat.findByIdAndUpdate(
+      ticketId,
+      { status: 'closed', updatedAt: new Date() },
+      { returnDocument: 'after' },
+    );
 
-        if (!chat) return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
-        await whatsappService.recordChatEvent(chat, req.agent, 'closed');
-        await audit(req, 'chat.close', { targetType: 'chat', targetId: chat._id });
-        res.json({ success: true, message: 'Atendimento encerrado!', data: chat });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
+    if (!chat) return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
+    await whatsappService.recordChatEvent(chat, req.agent, 'closed');
+    await audit(req, 'chat.close', { targetType: 'chat', targetId: chat._id });
+    res.json({ success: true, message: 'Atendimento encerrado!', data: chat });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.post('/tickets/unclaim', requireAgent, async (req, res) => {
-    try {
-        const { ticketId } = req.body;
-        const chat = await Chat.findById(ticketId);
-        if (!chat) {
-            return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
-        }
-
-        chat.status = 'pending';
-        chat.assignedAgent = null;
-        chat.updatedAt = new Date();
-        await chat.save();
-
-        await whatsappService.recordChatEvent(chat, req.agent, 'unclaimed');
-        await audit(req, 'chat.unclaim', { targetType: 'chat', targetId: chat._id });
-
-        return res.status(200).json({ success: true, data: chat });
-    } catch (err) {
-        console.error('Erro ao devolver chat:', err);
-        return res.status(500).json({ success: false, error: 'Erro interno no servidor.' });
+  try {
+    const { ticketId } = req.body;
+    const chat = await Chat.findById(ticketId);
+    if (!chat) {
+      return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
     }
+
+    chat.status = 'pending';
+    chat.assignedAgent = null;
+    chat.updatedAt = new Date();
+    await chat.save();
+
+    await whatsappService.recordChatEvent(chat, req.agent, 'unclaimed');
+    await audit(req, 'chat.unclaim', { targetType: 'chat', targetId: chat._id });
+
+    return res.status(200).json({ success: true, data: chat });
+  } catch (err) {
+    console.error('Erro ao devolver chat:', err);
+    return res.status(500).json({ success: false, error: 'Erro interno no servidor.' });
+  }
 });
 
 router.get('/tickets/:ticketId/glpi/messages', requireAgent, async (req, res) => {
-    try {
-        const chat = await Chat.findById(req.params.ticketId);
-        if (!chat) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
-        const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
-        const messages = await Message.find({
-            ticketId: chat._id,
-            timestamp: { $gte: since },
-            isInternalEvent: { $ne: true }
-        }).sort({ timestamp: 1 }).select('_id sender body hasMedia mediaPath mediaFileName mediaMimeType timestamp groupSenderName').lean();
-        res.json({ success: true, data: messages.map(message => ({
-            _id: message._id,
-            sender: message.sender,
-            body: message.body,
-            hasMedia: message.hasMedia,
-            attachmentAvailable: Boolean(message.hasMedia && message.mediaPath),
-            mediaFileName: message.mediaFileName,
-            mediaMimeType: message.mediaMimeType,
-            timestamp: message.timestamp,
-            groupSenderName: message.groupSenderName
-        })) });
-    } catch (err) {
-        res.status(500).json({ success: false, error: 'Não foi possível carregar as mensagens.' });
-    }
+  try {
+    const chat = await Chat.findById(req.params.ticketId);
+    if (!chat) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
+    const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const messages = await Message.find({
+      ticketId: chat._id,
+      timestamp: { $gte: since },
+      isInternalEvent: { $ne: true },
+    })
+      .sort({ timestamp: 1 })
+      .select(
+        '_id sender body hasMedia mediaPath mediaFileName mediaMimeType timestamp groupSenderName',
+      )
+      .lean();
+    res.json({
+      success: true,
+      data: messages.map((message) => ({
+        _id: message._id,
+        sender: message.sender,
+        body: message.body,
+        hasMedia: message.hasMedia,
+        attachmentAvailable: Boolean(message.hasMedia && message.mediaPath),
+        mediaFileName: message.mediaFileName,
+        mediaMimeType: message.mediaMimeType,
+        timestamp: message.timestamp,
+        groupSenderName: message.groupSenderName,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Não foi possível carregar as mensagens.' });
+  }
 });
 
 router.post('/tickets/:ticketId/glpi', requireAgent, async (req, res) => {
-    try {
-        const title = String(req.body?.title || '').trim();
-        if (!title) return res.status(400).json({ success: false, error: 'Informe o título do chamado.' });
-        if (title.length > 255) return res.status(400).json({ success: false, error: 'O título deve ter no máximo 255 caracteres.' });
-        const messageIds = Array.isArray(req.body?.messageIds) ? [...new Set(req.body.messageIds.map(String))] : [];
-        const attachmentMessageIds = Array.isArray(req.body?.attachmentMessageIds) ? [...new Set(req.body.attachmentMessageIds.map(String))] : [];
-        if (!messageIds.length) return res.status(400).json({ success: false, error: 'Selecione pelo menos uma mensagem.' });
-        if (messageIds.some(id => !/^[a-f\d]{24}$/i.test(id))) return res.status(400).json({ success: false, error: 'A seleção contém uma mensagem inválida.' });
-        if (attachmentMessageIds.some(id => !messageIds.includes(id))) return res.status(400).json({ success: false, error: 'Só é possível anexar arquivos de mensagens selecionadas.' });
+  try {
+    const title = String(req.body?.title || '').trim();
+    if (!title)
+      return res.status(400).json({ success: false, error: 'Informe o título do chamado.' });
+    if (title.length > 255)
+      return res
+        .status(400)
+        .json({ success: false, error: 'O título deve ter no máximo 255 caracteres.' });
+    const messageIds = Array.isArray(req.body?.messageIds)
+      ? [...new Set(req.body.messageIds.map(String))]
+      : [];
+    const attachmentMessageIds = Array.isArray(req.body?.attachmentMessageIds)
+      ? [...new Set(req.body.attachmentMessageIds.map(String))]
+      : [];
+    if (!messageIds.length)
+      return res.status(400).json({ success: false, error: 'Selecione pelo menos uma mensagem.' });
+    if (messageIds.some((id) => !/^[a-f\d]{24}$/i.test(id)))
+      return res
+        .status(400)
+        .json({ success: false, error: 'A seleção contém uma mensagem inválida.' });
+    if (attachmentMessageIds.some((id) => !messageIds.includes(id)))
+      return res.status(400).json({
+        success: false,
+        error: 'Só é possível anexar arquivos de mensagens selecionadas.',
+      });
 
-        const chat = await Chat.findById(req.params.ticketId);
-        if (!chat) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
-        const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
-        const messages = await Message.find({
-            ticketId: chat._id,
-            _id: { $in: messageIds },
-            timestamp: { $gte: since },
-            isInternalEvent: { $ne: true }
-        }).sort({ timestamp: 1 }).lean();
-        if (!messages.length) return res.status(400).json({ success: false, error: 'Nenhuma das mensagens selecionadas está disponível nas últimas 48 horas.' });
+    const chat = await Chat.findById(req.params.ticketId);
+    if (!chat) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
+    const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const messages = await Message.find({
+      ticketId: chat._id,
+      _id: { $in: messageIds },
+      timestamp: { $gte: since },
+      isInternalEvent: { $ne: true },
+    })
+      .sort({ timestamp: 1 })
+      .lean();
+    if (!messages.length)
+      return res.status(400).json({
+        success: false,
+        error: 'Nenhuma das mensagens selecionadas está disponível nas últimas 48 horas.',
+      });
 
-        const mediaDirectory = path.resolve(__dirname, '..', '..', '..', 'storage', 'media');
-        const attachments = messages.filter(message => attachmentMessageIds.includes(String(message._id)) && message.hasMedia && message.mediaPath).flatMap(message => {
-            const filePath = path.resolve(mediaDirectory, message.mediaPath);
-            if (!filePath.startsWith(`${mediaDirectory}${path.sep}`)) return [];
-            return [{ filePath, fileName: message.mediaFileName || path.basename(filePath), mimeType: message.mediaMimeType }];
-        });
-        const created = await glpiService.createTicket({ title, messages, contactName: chat.contactName, attachments });
-        const glpiTicketUrl = glpiService.ticketUrl(created.id);
-        await whatsappService.recordGlpiTicketEvent(chat, req.agent, created.id, glpiTicketUrl)
-            .catch(err => console.error('[GLPI][REGISTRAR EVENTO]', err.message));
-        await audit(req, 'glpi.chat_create', {
-            targetType: 'chat',
-            targetId: chat._id,
-            details: {
-                glpiTicketId: created.id,
-                messageCount: messages.length,
-                uploadedAttachmentCount: created.uploadedAttachments.length,
-                failedAttachmentCount: created.failedAttachments.length
-            }
-        });
-        const failedCount = created.failedAttachments.length;
-        res.status(201).json({
-            success: true,
-            message: failedCount
-                ? `Chamado #${created.id} aberto, mas ${failedCount} arquivo(s) não puderam ser anexados.`
-                : `Chamado #${created.id} aberto com ${created.uploadedAttachments.length} arquivo(s)!`,
-            data: { id: created.id, url: glpiTicketUrl, messageCount: messages.length, uploadedAttachments: created.uploadedAttachments, failedAttachments: created.failedAttachments }
-        });
-    } catch (err) {
-        console.error('[GLPI][ABRIR CHAMADO]', err.message);
-        res.status(502).json({ success: false, error: err.message || 'Não foi possível abrir o chamado no GLPI.' });
-    }
+    const mediaDirectory = path.resolve(__dirname, '..', '..', '..', 'storage', 'media');
+    const attachments = messages
+      .filter(
+        (message) =>
+          attachmentMessageIds.includes(String(message._id)) &&
+          message.hasMedia &&
+          message.mediaPath,
+      )
+      .flatMap((message) => {
+        const filePath = path.resolve(mediaDirectory, message.mediaPath);
+        if (!filePath.startsWith(`${mediaDirectory}${path.sep}`)) return [];
+        return [
+          {
+            filePath,
+            fileName: message.mediaFileName || path.basename(filePath),
+            mimeType: message.mediaMimeType,
+          },
+        ];
+      });
+    const created = await glpiService.createTicket({
+      title,
+      messages,
+      contactName: chat.contactName,
+      attachments,
+    });
+    const glpiTicketUrl = glpiService.ticketUrl(created.id);
+    await whatsappService
+      .recordGlpiTicketEvent(chat, req.agent, created.id, glpiTicketUrl)
+      .catch((err) => console.error('[GLPI][REGISTRAR EVENTO]', err.message));
+    await audit(req, 'glpi.chat_create', {
+      targetType: 'chat',
+      targetId: chat._id,
+      details: {
+        glpiTicketId: created.id,
+        messageCount: messages.length,
+        uploadedAttachmentCount: created.uploadedAttachments.length,
+        failedAttachmentCount: created.failedAttachments.length,
+      },
+    });
+    const failedCount = created.failedAttachments.length;
+    res.status(201).json({
+      success: true,
+      message: failedCount
+        ? `Chamado #${created.id} aberto, mas ${failedCount} arquivo(s) não puderam ser anexados.`
+        : `Chamado #${created.id} aberto com ${created.uploadedAttachments.length} arquivo(s)!`,
+      data: {
+        id: created.id,
+        url: glpiTicketUrl,
+        messageCount: messages.length,
+        uploadedAttachments: created.uploadedAttachments,
+        failedAttachments: created.failedAttachments,
+      },
+    });
+  } catch (err) {
+    console.error('[GLPI][ABRIR CHAMADO]', err.message);
+    res
+      .status(502)
+      .json({ success: false, error: err.message || 'Não foi possível abrir o chamado no GLPI.' });
+  }
 });
 
 // --- ROTA DE LIMPEZA DO BANCO DE DADOS ---
 router.delete('/database/clear', requireAgent, requireAdmin, async (req, res) => {
-    try {
-        await Chat.deleteMany({});
-        await Message.deleteMany({});
-        res.json({ success: true, message: 'Banco de dados limpo com sucesso! Todos os tickets e mensagens foram removidos.' });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
+  try {
+    await Chat.deleteMany({});
+    await Message.deleteMany({});
+    res.json({
+      success: true,
+      message: 'Banco de dados limpo com sucesso! Todos os tickets e mensagens foram removidos.',
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 module.exports = router;

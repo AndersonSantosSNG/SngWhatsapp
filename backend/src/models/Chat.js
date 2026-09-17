@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 
-const ChatSchema = new mongoose.Schema({
+const ChatSchema = new mongoose.Schema(
+  {
     phoneNumber: { type: String, required: true, unique: true },
     whatsappId: { type: String, default: '' },
     contactName: { type: String, default: '' },
@@ -11,8 +12,10 @@ const ChatSchema = new mongoose.Schema({
     lastMessageAt: { type: Date, default: null },
     updatedAt: { type: Date, default: Date.now },
     profilePicUrl: { type: String, default: '' },
-    isTemporary: { type: Boolean, default: false }
-}, { collection: 'tickets' });
+    isTemporary: { type: Boolean, default: false },
+  },
+  { collection: 'tickets' },
+);
 
 ChatSchema.index({ status: 1, updatedAt: -1 });
 ChatSchema.index({ assignedAgent: 1, updatedAt: -1 });

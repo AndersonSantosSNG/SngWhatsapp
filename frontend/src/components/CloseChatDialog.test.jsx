@@ -3,16 +3,27 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import CloseChatDialog, { CLOSING_MESSAGE } from './CloseChatDialog';
 
 beforeAll(() => {
-  HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
-  HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); };
+  HTMLDialogElement.prototype.showModal = function () {
+    this.setAttribute('open', '');
+  };
+  HTMLDialogElement.prototype.close = function () {
+    this.removeAttribute('open');
+  };
 });
 
 function setup(overrides = {}) {
-  const props = { canSendMessages: true, onSend: vi.fn().mockResolvedValue({}), onClose: vi.fn().mockResolvedValue(true), onCancel: vi.fn(), ...overrides };
+  const props = {
+    canSendMessages: true,
+    onSend: vi.fn().mockResolvedValue({}),
+    onClose: vi.fn().mockResolvedValue(true),
+    onCancel: vi.fn(),
+    ...overrides,
+  };
   render(<CloseChatDialog {...props} />);
   return props;
 }
-const confirm = () => fireEvent.click(screen.getByRole('button', { name: 'Confirmar encerramento' }));
+const confirm = () =>
+  fireEvent.click(screen.getByRole('button', { name: 'Confirmar encerramento' }));
 const selectMessage = () => fireEvent.click(screen.getByRole('checkbox'));
 
 describe('CloseChatDialog', () => {
@@ -34,10 +45,19 @@ describe('CloseChatDialog', () => {
 
   it('aguarda o envio antes de encerrar e bloqueia confirmação duplicada', async () => {
     let finishSend;
-    const props = setup({ onSend: vi.fn(() => new Promise(resolve => { finishSend = resolve; })) });
+    const props = setup({
+      onSend: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finishSend = resolve;
+          }),
+      ),
+    });
     selectMessage();
     confirm();
-    expect(props.onSend).toHaveBeenCalledWith(CLOSING_MESSAGE, undefined, { isClosingMessage: true });
+    expect(props.onSend).toHaveBeenCalledWith(CLOSING_MESSAGE, undefined, {
+      isClosingMessage: true,
+    });
     expect(props.onClose).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Encerrando...' })).toBeDisabled();
     fireEvent.submit(screen.getByRole('button', { name: 'Encerrando...' }).closest('form'));
@@ -56,7 +76,9 @@ describe('CloseChatDialog', () => {
   });
 
   it('não repete mensagem enviada ao tentar novamente um encerramento que falhou', async () => {
-    const props = setup({ onClose: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true) });
+    const props = setup({
+      onClose: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true),
+    });
     selectMessage();
     confirm();
     await screen.findByRole('alert');

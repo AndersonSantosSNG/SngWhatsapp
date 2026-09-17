@@ -12,7 +12,9 @@ describe('LoginModal', () => {
   it('envia credenciais e apresenta erro', async () => {
     const onLogin = vi.fn().mockRejectedValue(new Error('Credenciais inválidas'));
     render(<LoginModal onLogin={onLogin} />);
-    fireEvent.change(screen.getByLabelText('E-mail corporativo'), { target: { value: 'agente@sng.com.br' } });
+    fireEvent.change(screen.getByLabelText('E-mail corporativo'), {
+      target: { value: 'agente@sng.com.br' },
+    });
     fireEvent.change(screen.getByLabelText('Senha'), { target: { value: 'senha' } });
     fireEvent.click(screen.getByRole('button', { name: 'Entrar' }));
     await waitFor(() => expect(onLogin).toHaveBeenCalledWith('agente@sng.com.br', 'senha'));

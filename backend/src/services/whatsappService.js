@@ -32,1881 +32,2108 @@ let historySyncPromise = null;
 let callPollTimer = null;
 
 function isWithinMessageWindow(message, windowMs) {
-    const sentAt = new Date(message.timestamp || message.createdAt || 0).getTime();
-    return Number.isFinite(sentAt) && Date.now() - sentAt <= windowMs;
+  const sentAt = new Date(message.timestamp || message.createdAt || 0).getTime();
+  return Number.isFinite(sentAt) && Date.now() - sentAt <= windowMs;
 }
 
 function getMediaExtension(media) {
-    const originalExtension = path.extname(media.filename || '').replace(/[^.a-zA-Z0-9]/g, '');
-    if (originalExtension) return originalExtension.toLowerCase();
+  const originalExtension = path.extname(media.filename || '').replace(/[^.a-zA-Z0-9]/g, '');
+  if (originalExtension) return originalExtension.toLowerCase();
 
-    const extensions = {
-        'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif',
-        'video/mp4': '.mp4', 'audio/ogg': '.ogg', 'audio/mpeg': '.mp3', 'application/pdf': '.pdf'
-    };
-    return extensions[media.mimetype] || '';
+  const extensions = {
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'image/gif': '.gif',
+    'video/mp4': '.mp4',
+    'audio/ogg': '.ogg',
+    'audio/mpeg': '.mp3',
+    'application/pdf': '.pdf',
+  };
+  return extensions[media.mimetype] || '';
 }
 
 async function persistMedia(media) {
-    if (!media?.data) return null;
+  if (!media?.data) return null;
 
-    await fs.mkdir(mediaDirectory, { recursive: true });
-    const storedName = `${randomUUID()}${getMediaExtension(media)}`;
-    await fs.writeFile(path.join(mediaDirectory, storedName), Buffer.from(media.data, 'base64'));
+  await fs.mkdir(mediaDirectory, { recursive: true });
+  const storedName = `${randomUUID()}${getMediaExtension(media)}`;
+  await fs.writeFile(path.join(mediaDirectory, storedName), Buffer.from(media.data, 'base64'));
 
-    return {
-        hasMedia: true,
-        mediaPath: storedName,
-        mediaMimeType: media.mimetype || 'application/octet-stream',
-        mediaFileName: media.filename || storedName
-    };
+  return {
+    hasMedia: true,
+    mediaPath: storedName,
+    mediaMimeType: media.mimetype || 'application/octet-stream',
+    mediaFileName: media.filename || storedName,
+  };
 }
 
 async function takePendingOutgoingMedia(targetChatId) {
-    const now = Date.now();
-    let index = pendingOutgoingMedia.findIndex(item => item.targetJid === targetChatId);
+  const now = Date.now();
+  let index = pendingOutgoingMedia.findIndex((item) => item.targetJid === targetChatId);
 
-    if (index < 0) {
-        index = pendingOutgoingMedia.findIndex(item => now - item.createdAt < 60000);
-    }
-    if (index < 0) return null;
+  if (index < 0) {
+    index = pendingOutgoingMedia.findIndex((item) => now - item.createdAt < 60000);
+  }
+  if (index < 0) return null;
 
-    const [pending] = pendingOutgoingMedia.splice(index, 1);
-    return persistMedia(pending.media);
+  const [pending] = pendingOutgoingMedia.splice(index, 1);
+  return persistMedia(pending.media);
 }
 
 async function downloadMessageMediaFallback(msg) {
-    const raw = msg._data || {};
-    const messageId = getWhatsAppMessageId(msg);
-    const mediaData = {
-        directPath: raw.directPath,
-        encFilehash: raw.encFilehash,
-        filehash: raw.filehash,
-        mediaKey: raw.mediaKey || msg.mediaKey,
-        mediaKeyTimestamp: raw.mediaKeyTimestamp,
-        type: raw.type || msg.type,
-        mimetype: raw.mimetype,
-        filename: raw.filename,
-        size: raw.size
-    };
+  const raw = msg._data || {};
+  const messageId = getWhatsAppMessageId(msg);
+  const mediaData = {
+    directPath: raw.directPath,
+    encFilehash: raw.encFilehash,
+    filehash: raw.filehash,
+    mediaKey: raw.mediaKey || msg.mediaKey,
+    mediaKeyTimestamp: raw.mediaKeyTimestamp,
+    type: raw.type || msg.type,
+    mimetype: raw.mimetype,
+    filename: raw.filename,
+    size: raw.size,
+  };
 
-    return client.pupPage.evaluate(async ({ id, fallbackMedia }) => {
-        let model = null;
+  return client.pupPage.evaluate(
+    async ({ id, fallbackMedia }) => {
+      let model = null;
+      try {
+        model = window.require('WAWebCollections').Msg.get(id);
+      } catch (err) {}
+
+      if (!model) {
         try {
-            model = window.require('WAWebCollections').Msg.get(id);
+          model = (await window.require('WAWebCollections').Msg.getMessagesById([id]))
+            ?.messages?.[0];
         } catch (err) {}
+      }
 
-        if (!model) {
-            try {
-                model = (
-                    await window.require('WAWebCollections').Msg.getMessagesById([id])
-                )?.messages?.[0];
-            } catch (err) {}
-        }
+      if (model?.mediaData?.mediaStage !== 'RESOLVED') {
+        try {
+          await model.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1 });
+        } catch (err) {}
+      }
 
-        if (model?.mediaData?.mediaStage !== 'RESOLVED') {
-            try {
-                await model.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1 });
-            } catch (err) {}
-        }
+      const source = model || fallbackMedia;
+      if (!source?.directPath || !source?.mediaKey) return null;
 
-        const source = model || fallbackMedia;
-        if (!source?.directPath || !source?.mediaKey) return null;
+      const mockQpl = {
+        addAnnotations() {
+          return this;
+        },
+        addPoint() {
+          return this;
+        },
+      };
+      const decryptedMedia = await window
+        .require('WAWebDownloadManager')
+        .downloadManager.downloadAndMaybeDecrypt({
+          directPath: source.directPath,
+          encFilehash: source.encFilehash,
+          filehash: source.filehash,
+          mediaKey: source.mediaKey,
+          mediaKeyTimestamp: source.mediaKeyTimestamp,
+          type: source.type,
+          signal: new AbortController().signal,
+          downloadQpl: mockQpl,
+        });
 
-        const mockQpl = {
-            addAnnotations() { return this; },
-            addPoint() { return this; }
-        };
-        const decryptedMedia = await window
-            .require('WAWebDownloadManager')
-            .downloadManager.downloadAndMaybeDecrypt({
-                directPath: source.directPath,
-                encFilehash: source.encFilehash,
-                filehash: source.filehash,
-                mediaKey: source.mediaKey,
-                mediaKeyTimestamp: source.mediaKeyTimestamp,
-                type: source.type,
-                signal: new AbortController().signal,
-                downloadQpl: mockQpl
-            });
-
-        return {
-            data: await window.WWebJS.arrayBufferToBase64Async(decryptedMedia),
-            mimetype: source.mimetype || fallbackMedia.mimetype,
-            filename: source.filename || fallbackMedia.filename,
-            filesize: source.size || fallbackMedia.size
-        };
-    }, { id: messageId, fallbackMedia: mediaData });
+      return {
+        data: await window.WWebJS.arrayBufferToBase64Async(decryptedMedia),
+        mimetype: source.mimetype || fallbackMedia.mimetype,
+        filename: source.filename || fallbackMedia.filename,
+        filesize: source.size || fallbackMedia.size,
+      };
+    },
+    { id: messageId, fallbackMedia: mediaData },
+  );
 }
 
 async function saveMessageMedia(msg) {
-    if (!msg.hasMedia && !['image', 'video', 'audio', 'ptt', 'document', 'sticker'].includes(msg.type)) return null;
+  if (
+    !msg.hasMedia &&
+    !['image', 'video', 'audio', 'ptt', 'document', 'sticker'].includes(msg.type)
+  )
+    return null;
 
-    try {
-        if (msg.id && !msg.id._serialized) {
-            msg.id._serialized = getWhatsAppMessageId(msg);
-        }
-
-        const media = await Promise.race([
-            (async () => {
-                try {
-                    const standardMedia = await msg.downloadMedia();
-                    if (standardMedia?.data) return standardMedia;
-                } catch (err) {}
-
-                return downloadMessageMediaFallback(msg);
-            })(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout ao baixar midia')), 30000))
-        ]);
-        if (!media?.data) return null;
-
-        return persistMedia(media);
-    } catch (err) {
-        console.error(`[MIDIA] Nao foi possivel baixar a mensagem: ${err.message || err}`);
-        return null;
+  try {
+    if (msg.id && !msg.id._serialized) {
+      msg.id._serialized = getWhatsAppMessageId(msg);
     }
+
+    const media = await Promise.race([
+      (async () => {
+        try {
+          const standardMedia = await msg.downloadMedia();
+          if (standardMedia?.data) return standardMedia;
+        } catch (err) {}
+
+        return downloadMessageMediaFallback(msg);
+      })(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout ao baixar midia')), 30000),
+      ),
+    ]);
+    if (!media?.data) return null;
+
+    return persistMedia(media);
+  } catch (err) {
+    console.error(`[MIDIA] Nao foi possivel baixar a mensagem: ${err.message || err}`);
+    return null;
+  }
 }
 
 function getWhatsAppMessageId(msg) {
-    const id = msg?.id;
-    if (!id) return '';
+  const id = msg?.id;
+  if (!id) return '';
 
-    if (typeof id === 'string') return id;
-    if (id._serialized) return id._serialized;
-    if (id.$1) return id.$1;
+  if (typeof id === 'string') return id;
+  if (id._serialized) return id._serialized;
+  if (id.$1) return id.$1;
 
-    const messageId = id.id || '';
-    const remote = id.remote || msg.to || msg.from || '';
-    return messageId && remote ? `${id.fromMe ? 'true' : 'false'}_${remote}_${messageId}` : messageId;
+  const messageId = id.id || '';
+  const remote = id.remote || msg.to || msg.from || '';
+  return messageId && remote ? `${id.fromMe ? 'true' : 'false'}_${remote}_${messageId}` : messageId;
 }
 
 function mergeMessageAck(previousAck, nextAck) {
-    if (nextAck === -1) return -1;
-    if (previousAck === -1) return nextAck;
-    return Math.max(previousAck ?? 0, nextAck ?? 0);
+  if (nextAck === -1) return -1;
+  if (previousAck === -1) return nextAck;
+  return Math.max(previousAck ?? 0, nextAck ?? 0);
 }
 
 function getCallEventDetails(call) {
-    const fromMe = Boolean(call.fromMe ?? call.outgoing);
-    const isVideo = Boolean(call.isVideo ?? call.isVideoCall);
-    const outcome = String(call.outcome || call.callOutcome || call.callStatus || call.subtype || '').toLowerCase();
-    const duration = Number(call.duration || call.callDuration || 0);
-    const callKind = isVideo ? 'vídeo' : 'voz';
-    const rejected = /reject|declin|refus|deny/.test(outcome);
-    const missed = /miss|timeout|no.?answer|unanswered/.test(outcome);
-    const answered = duration > 0 || /accept|connect|answer|complete/.test(outcome);
-    let internalAction;
-    let body;
+  const fromMe = Boolean(call.fromMe ?? call.outgoing);
+  const isVideo = Boolean(call.isVideo ?? call.isVideoCall);
+  const outcome = String(
+    call.outcome || call.callOutcome || call.callStatus || call.subtype || '',
+  ).toLowerCase();
+  const duration = Number(call.duration || call.callDuration || 0);
+  const callKind = isVideo ? 'vídeo' : 'voz';
+  const rejected = /reject|declin|refus|deny/.test(outcome);
+  const missed = /miss|timeout|no.?answer|unanswered/.test(outcome);
+  const answered = duration > 0 || /accept|connect|answer|complete/.test(outcome);
+  let internalAction;
+  let body;
 
-    if (rejected) {
-        internalAction = 'call_rejected';
-        body = `Chamada de ${callKind} negada`;
-    } else if (!fromMe && (missed || (call.isFinal && !answered))) {
-        internalAction = 'call_missed';
-        body = `Chamada de ${callKind} perdida`;
-    } else if (fromMe) {
-        internalAction = 'call_made';
-        body = `Chamada de ${callKind} realizada`;
-    } else {
-        internalAction = 'call_received';
-        body = `Chamada de ${callKind} recebida`;
-    }
-    if (duration > 0) body += ` (${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, '0')})`;
-    return { fromMe, internalAction, body };
+  if (rejected) {
+    internalAction = 'call_rejected';
+    body = `Chamada de ${callKind} negada`;
+  } else if (!fromMe && (missed || (call.isFinal && !answered))) {
+    internalAction = 'call_missed';
+    body = `Chamada de ${callKind} perdida`;
+  } else if (fromMe) {
+    internalAction = 'call_made';
+    body = `Chamada de ${callKind} realizada`;
+  } else {
+    internalAction = 'call_received';
+    body = `Chamada de ${callKind} recebida`;
+  }
+  if (duration > 0)
+    body += ` (${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, '0')})`;
+  return { fromMe, internalAction, body };
 }
 
 function isCallLogMessage(message) {
-    return message?.type === 'call_log' || message?._data?.type === 'call_log';
+  return message?.type === 'call_log' || message?._data?.type === 'call_log';
 }
 
 function getStoredHistoryMessageId(message) {
-    const id = getWhatsAppMessageId(message);
-    return id && isCallLogMessage(message) ? `call-log:${id}` : id;
+  const id = getWhatsAppMessageId(message);
+  return id && isCallLogMessage(message) ? `call-log:${id}` : id;
 }
 
 function getCallSignature(peerId, body, timestamp) {
-    const timeBucket = Math.floor(new Date(timestamp).getTime() / 5000);
-    return `${peerId || ''}|${body || ''}|${timeBucket}`;
+  const timeBucket = Math.floor(new Date(timestamp).getTime() / 5000);
+  return `${peerId || ''}|${body || ''}|${timeBucket}`;
 }
 
 function dedupeCallEvents(messages) {
-    const seen = new Set();
-    return messages.filter(message => {
-        if (!message.isInternalEvent || !String(message.internalAction || '').startsWith('call_')) return true;
-        const signature = getCallSignature(message.ticketId, message.body, message.timestamp || message.createdAt);
-        if (seen.has(signature)) return false;
-        seen.add(signature);
-        return true;
-    });
+  const seen = new Set();
+  return messages.filter((message) => {
+    if (!message.isInternalEvent || !String(message.internalAction || '').startsWith('call_'))
+      return true;
+    const signature = getCallSignature(
+      message.ticketId,
+      message.body,
+      message.timestamp || message.createdAt,
+    );
+    if (seen.has(signature)) return false;
+    seen.add(signature);
+    return true;
+  });
 }
 
 async function getProfilePicUrl(contactId) {
-    if (!client || !contactId) return '';
+  if (!client || !contactId) return '';
 
-    try {
-        const profilePic = await client.pupPage.evaluate(async (id) => {
-            try {
-                const wid = window.require('WAWebWidFactory').createWid(id);
-                const result = await window
-                    .require('WAWebFindChatAction')
-                    .findOrCreateLatestChat(wid);
-                const chat = result?.chat || result;
+  try {
+    const profilePic = await client.pupPage.evaluate(async (id) => {
+      try {
+        const wid = window.require('WAWebWidFactory').createWid(id);
+        const result = await window.require('WAWebFindChatAction').findOrCreateLatestChat(wid);
+        const chat = result?.chat || result;
 
-                if (!chat) return undefined;
+        if (!chat) return undefined;
 
-                return await window
-                    .require('WAWebContactProfilePicThumbBridge')
-                    .requestProfilePicFromServer(chat);
-            } catch (err) {
-                if (err?.name === 'ServerStatusCodeError') return undefined;
-                throw err;
-            }
-        }, contactId);
+        return await window
+          .require('WAWebContactProfilePicThumbBridge')
+          .requestProfilePicFromServer(chat);
+      } catch (err) {
+        if (err?.name === 'ServerStatusCodeError') return undefined;
+        throw err;
+      }
+    }, contactId);
 
-        return profilePic?.eurl || '';
-    } catch (err) {
-        console.warn(`[FOTO] Foto indisponivel para ${contactId}: ${err.message || err}`);
-        return '';
-    }
+    return profilePic?.eurl || '';
+  } catch (err) {
+    console.warn(`[FOTO] Foto indisponivel para ${contactId}: ${err.message || err}`);
+    return '';
+  }
 }
 
 async function downloadProfilePicture(url) {
-    if (!url) return null;
+  if (!url) return null;
 
-    try {
-        const response = await fetch(url);
-        if (!response.ok) return null;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
 
-        return {
-            buffer: Buffer.from(await response.arrayBuffer()),
-            contentType: response.headers.get('content-type') || 'image/jpeg'
-        };
-    } catch (err) {
-        return null;
-    }
+    return {
+      buffer: Buffer.from(await response.arrayBuffer()),
+      contentType: response.headers.get('content-type') || 'image/jpeg',
+    };
+  } catch (err) {
+    return null;
+  }
 }
 
 async function getProfilePicture(identifier, isGroup = false, cachedUrl = '') {
-    if (!isClientReady || !client) return null;
+  if (!isClientReady || !client) return null;
 
-    const cachedPicture = await downloadProfilePicture(cachedUrl);
-    if (cachedPicture) return cachedPicture;
+  const cachedPicture = await downloadProfilePicture(cachedUrl);
+  if (cachedPicture) return cachedPicture;
 
-    const contactId = isGroup
-        ? identifier
-        : identifier?.includes('@')
-            ? identifier
-            : `${identifier.replace(/\D/g, '')}@c.us`;
-    const url = await getProfilePicUrl(contactId);
+  const contactId = isGroup
+    ? identifier
+    : identifier?.includes('@')
+      ? identifier
+      : `${identifier.replace(/\D/g, '')}@c.us`;
+  const url = await getProfilePicUrl(contactId);
 
-    return downloadProfilePicture(url);
+  return downloadProfilePicture(url);
 }
 
 function getChatDisplayName(chat, fallback = '') {
-    return chat?.groupMetadata?.subject
-        || chat?.name
-        || chat?.formattedTitle
-        || chat?.contactName
-        || chat?.contact?.name
-        || chat?.contact?.verifiedName
-        || chat?.contact?.pushname
-        || chat?.notifyName
-        || fallback;
+  return (
+    chat?.groupMetadata?.subject ||
+    chat?.name ||
+    chat?.formattedTitle ||
+    chat?.contactName ||
+    chat?.contact?.name ||
+    chat?.contact?.verifiedName ||
+    chat?.contact?.pushname ||
+    chat?.notifyName ||
+    fallback
+  );
 }
 
 function shouldRefreshChatName(currentName, phoneNumber) {
-    const name = String(currentName || '').trim();
-    if (!name) return true;
-    const normalizedName = name.replace(/\D/g, '');
-    const normalizedPhone = String(phoneNumber || '').replace(/\D/g, '');
-    return Boolean(normalizedPhone && normalizedName === normalizedPhone);
+  const name = String(currentName || '').trim();
+  if (!name) return true;
+  const normalizedName = name.replace(/\D/g, '');
+  const normalizedPhone = String(phoneNumber || '').replace(/\D/g, '');
+  return Boolean(normalizedPhone && normalizedName === normalizedPhone);
 }
 
 async function getQuotedContext(msg) {
-    const embeddedQuoted = msg?._data?.quotedMsg || msg?.quotedMsg;
-    if (!msg?.hasQuotedMsg && !embeddedQuoted) return {};
-    try {
-        let quoted = null;
-        if (typeof msg.getQuotedMessage === 'function') {
-            try { quoted = await msg.getQuotedMessage(); } catch (err) {}
-        }
-        quoted = quoted || embeddedQuoted;
-        if (!quoted) return {};
-        const quotedWhatsappMessageId = getWhatsAppMessageId(quoted);
-        const savedQuoted = quotedWhatsappMessageId
-            ? await Message.findOne({ whatsappMessageId: quotedWhatsappMessageId })
-            : null;
-        const quotedFromMe = quoted.fromMe ?? quoted.id?.fromMe ?? false;
-        const quotedBody = quoted.body || quoted.caption || (quoted.hasMedia ? '[Mídia/Arquivo]' : 'Mensagem');
-        let quotedSenderName = quotedFromMe ? 'Você' : (quoted.notifyName || quoted._data?.notifyName || quoted._data?.senderObj?.pushname || 'Contato');
-        if (!quotedFromMe && typeof quoted.getContact === 'function') {
-            try {
-                const quotedContact = await quoted.getContact();
-                quotedSenderName = quotedContact?.name || quotedContact?.verifiedName || quotedContact?.pushname || quotedSenderName;
-            } catch (err) {}
-        }
-        return {
-            quotedMessageId: savedQuoted?._id?.toString() || '',
-            quotedWhatsappMessageId,
-            quotedBody,
-            quotedSenderName
-        };
-    } catch (err) {
-        return {};
+  const embeddedQuoted = msg?._data?.quotedMsg || msg?.quotedMsg;
+  if (!msg?.hasQuotedMsg && !embeddedQuoted) return {};
+  try {
+    let quoted = null;
+    if (typeof msg.getQuotedMessage === 'function') {
+      try {
+        quoted = await msg.getQuotedMessage();
+      } catch (err) {}
     }
+    quoted = quoted || embeddedQuoted;
+    if (!quoted) return {};
+    const quotedWhatsappMessageId = getWhatsAppMessageId(quoted);
+    const savedQuoted = quotedWhatsappMessageId
+      ? await Message.findOne({ whatsappMessageId: quotedWhatsappMessageId })
+      : null;
+    const quotedFromMe = quoted.fromMe ?? quoted.id?.fromMe ?? false;
+    const quotedBody =
+      quoted.body || quoted.caption || (quoted.hasMedia ? '[Mídia/Arquivo]' : 'Mensagem');
+    let quotedSenderName = quotedFromMe
+      ? 'Você'
+      : quoted.notifyName ||
+        quoted._data?.notifyName ||
+        quoted._data?.senderObj?.pushname ||
+        'Contato';
+    if (!quotedFromMe && typeof quoted.getContact === 'function') {
+      try {
+        const quotedContact = await quoted.getContact();
+        quotedSenderName =
+          quotedContact?.name ||
+          quotedContact?.verifiedName ||
+          quotedContact?.pushname ||
+          quotedSenderName;
+      } catch (err) {}
+    }
+    return {
+      quotedMessageId: savedQuoted?._id?.toString() || '',
+      quotedWhatsappMessageId,
+      quotedBody,
+      quotedSenderName,
+    };
+  } catch (err) {
+    return {};
+  }
 }
 
 async function getChatsForHistory() {
-    return client.pupPage.evaluate(() => {
-        let toPn = null;
-        try { toPn = window.require('WAWebLidMigrationUtils').toPn; } catch (err) {}
+  return client.pupPage.evaluate(() => {
+    let toPn = null;
+    try {
+      toPn = window.require('WAWebLidMigrationUtils').toPn;
+    } catch (err) {}
 
-        return window.require('WAWebCollections').Chat.getModelsArray().map(chat => {
+    return window
+      .require('WAWebCollections')
+      .Chat.getModelsArray()
+      .map((chat) => {
+        try {
+          const serialized = chat.id?._serialized || chat.id?.$1 || '';
+          let phoneNumber = chat.id?.user || '';
+          if (serialized.endsWith('@lid') && toPn) {
             try {
-                const serialized = chat.id?._serialized || chat.id?.$1 || '';
-                let phoneNumber = chat.id?.user || '';
-                if (serialized.endsWith('@lid') && toPn) {
-                    try { phoneNumber = toPn(chat.id)?.user || phoneNumber; } catch (err) {}
-                }
-                return {
-                    id: { _serialized: serialized, user: chat.id?.user || '' },
-                    phoneNumber,
-                    name: chat.groupMetadata?.subject || chat.formattedTitle || chat.name || chat.contactName || chat.contact?.name || chat.contact?.verifiedName || chat.contact?.pushname || chat.notifyName || '',
-                    formattedTitle: chat.formattedTitle || '',
-                    isGroup: Boolean(chat.isGroup || serialized.endsWith('@g.us'))
-                };
-            } catch (err) {
-                return null;
-            }
-        }).filter(Boolean);
-    });
+              phoneNumber = toPn(chat.id)?.user || phoneNumber;
+            } catch (err) {}
+          }
+          return {
+            id: { _serialized: serialized, user: chat.id?.user || '' },
+            phoneNumber,
+            name:
+              chat.groupMetadata?.subject ||
+              chat.formattedTitle ||
+              chat.name ||
+              chat.contactName ||
+              chat.contact?.name ||
+              chat.contact?.verifiedName ||
+              chat.contact?.pushname ||
+              chat.notifyName ||
+              '',
+            formattedTitle: chat.formattedTitle || '',
+            isGroup: Boolean(chat.isGroup || serialized.endsWith('@g.us')),
+          };
+        } catch (err) {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  });
 }
 
 async function fetchMessagesForHistory(chatId, cutoff) {
-    return client.pupPage.evaluate(async ({ id, cutoffSeconds, limit }) => {
-        const serializeWid = value => typeof value === 'string' ? value : (value?._serialized || value?.$1 || '');
-        const chats = window.require('WAWebCollections').Chat.getModelsArray();
-        const chat = chats.find(item => (item.id?._serialized || item.id?.$1) === id);
-        if (!chat?.msgs) return [];
+  return client.pupPage.evaluate(
+    async ({ id, cutoffSeconds, limit }) => {
+      const serializeWid = (value) =>
+        typeof value === 'string' ? value : value?._serialized || value?.$1 || '';
+      const chats = window.require('WAWebCollections').Chat.getModelsArray();
+      const chat = chats.find((item) => (item.id?._serialized || item.id?.$1) === id);
+      if (!chat?.msgs) return [];
 
-        const validMessage = message => (message.type === 'call_log' || !message.isNotification) && Number(message.t) >= cutoffSeconds;
-        let messages = chat.msgs.getModelsArray();
-        let previousOldest = 0;
+      const validMessage = (message) =>
+        (message.type === 'call_log' || !message.isNotification) &&
+        Number(message.t) >= cutoffSeconds;
+      let messages = chat.msgs.getModelsArray();
+      let previousOldest = 0;
 
-        while (messages.length < limit) {
-            const sorted = [...messages].sort((a, b) => Number(a.t) - Number(b.t));
-            const oldest = Number(sorted[0]?.t || 0);
-            if (!oldest || oldest <= cutoffSeconds || oldest === previousOldest) break;
-            previousOldest = oldest;
+      while (messages.length < limit) {
+        const sorted = [...messages].sort((a, b) => Number(a.t) - Number(b.t));
+        const oldest = Number(sorted[0]?.t || 0);
+        if (!oldest || oldest <= cutoffSeconds || oldest === previousOldest) break;
+        previousOldest = oldest;
 
-            let loaded;
-            try {
-                loaded = await window.require('WAWebChatLoadMessages').loadEarlierMsgs({ chat });
-            } catch (err) {
-                break;
-            }
-            if (!loaded?.length) break;
-            messages = chat.msgs.getModelsArray();
+        let loaded;
+        try {
+          loaded = await window.require('WAWebChatLoadMessages').loadEarlierMsgs({ chat });
+        } catch (err) {
+          break;
         }
+        if (!loaded?.length) break;
+        messages = chat.msgs.getModelsArray();
+      }
 
-        return messages
-            .filter(validMessage)
-            .sort((a, b) => Number(a.t) - Number(b.t))
-            .slice(-limit)
-            .map(message => ({
-                id: {
-                    _serialized: serializeWid(message.id),
-                    id: message.id?.id || '',
-                    remote: serializeWid(message.id?.remote) || id,
-                    fromMe: Boolean(message.id?.fromMe)
-                },
-                fromMe: Boolean(message.id?.fromMe),
-                author: serializeWid(message.author),
-                body: ['image', 'video', 'audio', 'ptt', 'document', 'sticker'].includes(message.type) ? (message.caption || '') : (message.body || ''),
-                mentionedIds: (message.mentionedJidList || []).map(serializeWid),
-                hasMedia: Boolean(message.mediaData || message.type === 'image' || message.type === 'video' || message.type === 'audio' || message.type === 'document' || message.type === 'ptt' || message.type === 'sticker'),
-                type: message.type || '',
-                isVideoCall: Boolean(message.isVideoCall || message.isVideo),
-                callOutcome: message.callOutcome || message.callStatus || message.subtype || '',
-                callDuration: Number(message.callDuration || message.duration || 0),
-                mediaKey: message.mediaKey || message.mediaData?.mediaKey || '',
-                timestamp: Number(message.t),
-                ack: Number(message.ack),
-                _data: {
-                    author: serializeWid(message.author),
-                    caption: message.caption || '',
-                    notifyName: message.notifyName || message.senderObj?.pushname || '',
-                    directPath: message.directPath || message.mediaData?.directPath || '',
-                    encFilehash: message.encFilehash || message.mediaData?.encFilehash || '',
-                    filehash: message.filehash || message.mediaData?.filehash || '',
-                    mediaKey: message.mediaKey || message.mediaData?.mediaKey || '',
-                    mediaKeyTimestamp: message.mediaKeyTimestamp || message.mediaData?.mediaKeyTimestamp,
-                    type: message.type || '',
-                    isVideoCall: Boolean(message.isVideoCall || message.isVideo),
-                    callOutcome: message.callOutcome || message.callStatus || message.subtype || '',
-                    callDuration: Number(message.callDuration || message.duration || 0),
-                    mimetype: message.mimetype || message.mediaData?.mimetype || '',
-                    filename: message.filename || message.mediaData?.filename || '',
-                    size: message.size || message.mediaData?.size
-                }
-            }));
-    }, { id: chatId, cutoffSeconds: Math.floor(cutoff / 1000), limit: historySyncLimit });
+      return messages
+        .filter(validMessage)
+        .sort((a, b) => Number(a.t) - Number(b.t))
+        .slice(-limit)
+        .map((message) => ({
+          id: {
+            _serialized: serializeWid(message.id),
+            id: message.id?.id || '',
+            remote: serializeWid(message.id?.remote) || id,
+            fromMe: Boolean(message.id?.fromMe),
+          },
+          fromMe: Boolean(message.id?.fromMe),
+          author: serializeWid(message.author),
+          body: ['image', 'video', 'audio', 'ptt', 'document', 'sticker'].includes(message.type)
+            ? message.caption || ''
+            : message.body || '',
+          mentionedIds: (message.mentionedJidList || []).map(serializeWid),
+          hasMedia: Boolean(
+            message.mediaData ||
+              message.type === 'image' ||
+              message.type === 'video' ||
+              message.type === 'audio' ||
+              message.type === 'document' ||
+              message.type === 'ptt' ||
+              message.type === 'sticker',
+          ),
+          type: message.type || '',
+          isVideoCall: Boolean(message.isVideoCall || message.isVideo),
+          callOutcome: message.callOutcome || message.callStatus || message.subtype || '',
+          callDuration: Number(message.callDuration || message.duration || 0),
+          mediaKey: message.mediaKey || message.mediaData?.mediaKey || '',
+          timestamp: Number(message.t),
+          ack: Number(message.ack),
+          _data: {
+            author: serializeWid(message.author),
+            caption: message.caption || '',
+            notifyName: message.notifyName || message.senderObj?.pushname || '',
+            directPath: message.directPath || message.mediaData?.directPath || '',
+            encFilehash: message.encFilehash || message.mediaData?.encFilehash || '',
+            filehash: message.filehash || message.mediaData?.filehash || '',
+            mediaKey: message.mediaKey || message.mediaData?.mediaKey || '',
+            mediaKeyTimestamp: message.mediaKeyTimestamp || message.mediaData?.mediaKeyTimestamp,
+            type: message.type || '',
+            isVideoCall: Boolean(message.isVideoCall || message.isVideo),
+            callOutcome: message.callOutcome || message.callStatus || message.subtype || '',
+            callDuration: Number(message.callDuration || message.duration || 0),
+            mimetype: message.mimetype || message.mediaData?.mimetype || '',
+            filename: message.filename || message.mediaData?.filename || '',
+            size: message.size || message.mediaData?.size,
+          },
+        }));
+    },
+    { id: chatId, cutoffSeconds: Math.floor(cutoff / 1000), limit: historySyncLimit },
+  );
 }
 
 async function saveHistoricalMessageMedia(msg) {
-    if (!historySyncMedia || !msg.hasMedia) return null;
+  if (!historySyncMedia || !msg.hasMedia) return null;
 
-    try {
-        const media = await Promise.race([
-            downloadMessageMediaFallback(msg),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout ao baixar midia historica')), 30000))
-        ]);
-        return media?.data ? persistMedia(media) : null;
-    } catch (err) {
-        console.warn(`[HISTORICO] Midia ${getWhatsAppMessageId(msg)} indisponivel: ${err.message || err}`);
-        return null;
-    }
+  try {
+    const media = await Promise.race([
+      downloadMessageMediaFallback(msg),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout ao baixar midia historica')), 30000),
+      ),
+    ]);
+    return media?.data ? persistMedia(media) : null;
+  } catch (err) {
+    console.warn(
+      `[HISTORICO] Midia ${getWhatsAppMessageId(msg)} indisponivel: ${err.message || err}`,
+    );
+    return null;
+  }
 }
 
 async function syncRecentMessages() {
-    if (historySyncPromise) return historySyncPromise;
+  if (historySyncPromise) return historySyncPromise;
 
-    historySyncPromise = (async () => {
-        const cutoff = Date.now() - historySyncDays * 24 * 60 * 60 * 1000;
-        const chats = await getChatsForHistory();
-        let imported = 0;
-        let importedCalls = 0;
-        let downloadedMedia = 0;
-        const participantNames = new Map();
+  historySyncPromise = (async () => {
+    const cutoff = Date.now() - historySyncDays * 24 * 60 * 60 * 1000;
+    const chats = await getChatsForHistory();
+    let imported = 0;
+    let importedCalls = 0;
+    let downloadedMedia = 0;
+    const participantNames = new Map();
 
-        console.log(`[HISTORICO] Sincronizando ${historySyncDays} dias em ${chats.length} conversas...`);
+    console.log(
+      `[HISTORICO] Sincronizando ${historySyncDays} dias em ${chats.length} conversas...`,
+    );
 
-        for (const chat of chats) {
-            const chatId = chat.id?._serialized || '';
-            if (!chatId || chatId === 'status@broadcast' || chatId.includes('@broadcast')) continue;
+    for (const chat of chats) {
+      const chatId = chat.id?._serialized || '';
+      if (!chatId || chatId === 'status@broadcast' || chatId.includes('@broadcast')) continue;
 
-            try {
-                const isGroup = Boolean(chat.isGroup || chatId.includes('@g.us'));
-                const identifier = isGroup ? chatId : (chat.phoneNumber || chat.id?.user || chatId.replace(/@.+$/, '')).replace(/\D/g, '');
-                if (!identifier || (!isGroup && getChatDisplayName(chat, '').trim().toLowerCase() === 'whatsapp business')) continue;
+      try {
+        const isGroup = Boolean(chat.isGroup || chatId.includes('@g.us'));
+        const identifier = isGroup
+          ? chatId
+          : (chat.phoneNumber || chat.id?.user || chatId.replace(/@.+$/, '')).replace(/\D/g, '');
+        if (
+          !identifier ||
+          (!isGroup && getChatDisplayName(chat, '').trim().toLowerCase() === 'whatsapp business')
+        )
+          continue;
 
-                const recent = await fetchMessagesForHistory(chatId, cutoff);
-                if (!recent.length) continue;
+        const recent = await fetchMessagesForHistory(chatId, cutoff);
+        if (!recent.length) continue;
 
-                let storedChat = await Chat.findOne({ $or: [{ phoneNumber: identifier }, { whatsappId: chatId }] });
-                let displayName = getChatDisplayName(chat, identifier);
-                if (!isGroup && (!displayName || /^\+?\d+$/.test(String(displayName).replace(/[\s()-]/g, '')))) {
-                    try {
-                        const contactMetadata = await getContactMetadata(identifier);
-                        if (contactMetadata?.name && !/^\+?\d+$/.test(String(contactMetadata.name).replace(/[\s()-]/g, ''))) {
-                            displayName = contactMetadata.name;
-                        }
-                    } catch (err) {}
-                }
-                const latest = recent[recent.length - 1];
-                const latestBody = isCallLogMessage(latest)
-                    ? getCallEventDetails({ ...latest._data, ...latest, isFinal: true }).body
-                    : latest.body || (latest.hasMedia ? '[Mídia/Arquivo]' : '');
-                const latestDate = new Date(Number(latest.timestamp) * 1000);
-
-                if (!storedChat) {
-                    storedChat = await Chat.create({
-                        phoneNumber: identifier,
-                        whatsappId: chatId,
-                        contactName: displayName,
-                        isGroup,
-                        status: 'pending',
-                        lastMessage: latestBody,
-                        lastMessageAt: latestDate,
-                        updatedAt: latestDate
-                    });
-                } else {
-                    let changed = false;
-                    if (!storedChat.lastMessageAt || latestDate > new Date(storedChat.lastMessageAt)) {
-                        storedChat.lastMessage = latestBody;
-                        storedChat.lastMessageAt = latestDate;
-                        storedChat.updatedAt = latestDate;
-                        changed = true;
-                    }
-                    if (storedChat.whatsappId !== chatId) {
-                        storedChat.whatsappId = storedChat.whatsappId || chatId;
-                        changed = true;
-                    }
-                    if (displayName && shouldRefreshChatName(storedChat.contactName, identifier) && !/^\d+$/.test(displayName.replace(/\D/g, ''))) {
-                        storedChat.contactName = displayName;
-                        changed = true;
-                    }
-                    if (changed) await storedChat.save();
-                }
-
-                const ids = recent.map(getStoredHistoryMessageId).filter(Boolean);
-                const existing = await Message.find({ whatsappMessageId: { $in: ids } }).select('_id whatsappMessageId hasMedia').lean();
-                const existingById = new Map(existing.map(item => [item.whatsappMessageId, item]));
-                const legacyMessages = await Message.find({
-                    ticketId: storedChat._id,
-                    whatsappMessageId: '',
-                    timestamp: { $gte: new Date(cutoff) }
-                }).select('_id sender body timestamp').lean();
-                const storedCalls = await Message.find({
-                    ticketId: storedChat._id,
-                    isInternalEvent: true,
-                    internalAction: { $in: ['call_received', 'call_made', 'call_missed', 'call_rejected'] },
-                    timestamp: { $gte: new Date(cutoff) }
-                }).select('body timestamp').lean();
-                const seenCallSignatures = new Set(storedCalls.map(item => getCallSignature(storedChat._id, item.body, item.timestamp)));
-                const documents = [];
-                const legacyUpdates = [];
-
-                for (const msg of recent) {
-                    const whatsappMessageId = getStoredHistoryMessageId(msg);
-                    if (!whatsappMessageId) continue;
-
-                    const storedMessage = existingById.get(whatsappMessageId);
-                    if (storedMessage) {
-                        if (isCallLogMessage(msg)) continue;
-                        const correctedBody = await displayMessageText(msg, client);
-                        if (correctedBody && storedMessage.body !== correctedBody) await Message.updateOne({ _id: storedMessage._id }, { $set: { body: correctedBody } });
-                        if (msg.hasMedia && !storedMessage.hasMedia) {
-                            const storedMedia = await saveHistoricalMessageMedia(msg);
-                            if (storedMedia) {
-                                await Message.updateOne({ _id: storedMessage._id }, { $set: storedMedia });
-                                downloadedMedia += 1;
-                            }
-                        }
-                        continue;
-                    }
-
-                    const callEvent = isCallLogMessage(msg)
-                        ? getCallEventDetails({ ...msg._data, ...msg, isFinal: true })
-                        : null;
-                    const sender = msg.fromMe ? 'agent' : 'client';
-                    const body = callEvent?.body || await displayMessageText(msg, client);
-                    const timestamp = new Date(Number(msg.timestamp) * 1000);
-                    if (callEvent) {
-                        const callSignature = getCallSignature(storedChat._id, body, timestamp);
-                        if (seenCallSignatures.has(callSignature)) continue;
-                        seenCallSignatures.add(callSignature);
-                    }
-                    const mediaInfo = callEvent ? null : await saveHistoricalMessageMedia(msg);
-                    if (mediaInfo) downloadedMedia += 1;
-                    const legacyIndex = legacyMessages.findIndex(item =>
-                        item.sender === sender
-                        && item.body === body
-                        && Math.abs(new Date(item.timestamp).getTime() - timestamp.getTime()) <= 10000
-                    );
-                    if (legacyIndex >= 0) {
-                        const [legacy] = legacyMessages.splice(legacyIndex, 1);
-                        legacyUpdates.push({
-                            updateOne: {
-                                filter: { _id: legacy._id },
-                                update: { $set: { whatsappMessageId, ...(mediaInfo || {}) } }
-                            }
-                        });
-                        continue;
-                    }
-
-                    let groupSenderId = '';
-                    let groupSenderName = '';
-                    if (isGroup && !msg.fromMe) {
-                        groupSenderId = msg.author || msg._data?.author || '';
-                        if (participantNames.has(groupSenderId)) {
-                            groupSenderName = participantNames.get(groupSenderId);
-                        } else {
-                            try {
-                                const participant = await client.getContactById(groupSenderId);
-                                groupSenderName = participant?.name || participant?.verifiedName || participant?.pushname || '';
-                            } catch (err) {}
-                            groupSenderName = groupSenderName || msg._data?.notifyName || groupSenderId.replace(/@.+$/, '') || 'Participante';
-                            participantNames.set(groupSenderId, groupSenderName);
-                        }
-                    }
-
-                    documents.push({
-                        ticketId: storedChat._id,
-                        phoneNumber: identifier,
-                        whatsappMessageId,
-                        sender,
-                        groupSenderId,
-                        groupSenderName,
-                        body,
-                        ...(callEvent ? { isInternalEvent: true, internalAction: callEvent.internalAction } : {}),
-                        ack: Number.isInteger(msg.ack) ? msg.ack : 0,
-                        timestamp,
-                        ...(mediaInfo || {})
-                    });
-                }
-
-                if (legacyUpdates.length) await Message.bulkWrite(legacyUpdates);
-                if (documents.length) {
-                    await Message.insertMany(documents, { ordered: false });
-                    imported += documents.length;
-                    importedCalls += documents.filter(document => document.internalAction?.startsWith('call_')).length;
-                }
-            } catch (err) {
-                console.warn(`[HISTORICO] Falha ao sincronizar ${chatId}: ${err.message || err}`);
+        let storedChat = await Chat.findOne({
+          $or: [{ phoneNumber: identifier }, { whatsappId: chatId }],
+        });
+        let displayName = getChatDisplayName(chat, identifier);
+        if (
+          !isGroup &&
+          (!displayName || /^\+?\d+$/.test(String(displayName).replace(/[\s()-]/g, '')))
+        ) {
+          try {
+            const contactMetadata = await getContactMetadata(identifier);
+            if (
+              contactMetadata?.name &&
+              !/^\+?\d+$/.test(String(contactMetadata.name).replace(/[\s()-]/g, ''))
+            ) {
+              displayName = contactMetadata.name;
             }
+          } catch (err) {}
+        }
+        const latest = recent[recent.length - 1];
+        const latestBody = isCallLogMessage(latest)
+          ? getCallEventDetails({ ...latest._data, ...latest, isFinal: true }).body
+          : latest.body || (latest.hasMedia ? '[Mídia/Arquivo]' : '');
+        const latestDate = new Date(Number(latest.timestamp) * 1000);
+
+        if (!storedChat) {
+          storedChat = await Chat.create({
+            phoneNumber: identifier,
+            whatsappId: chatId,
+            contactName: displayName,
+            isGroup,
+            status: 'pending',
+            lastMessage: latestBody,
+            lastMessageAt: latestDate,
+            updatedAt: latestDate,
+          });
+        } else {
+          let changed = false;
+          if (!storedChat.lastMessageAt || latestDate > new Date(storedChat.lastMessageAt)) {
+            storedChat.lastMessage = latestBody;
+            storedChat.lastMessageAt = latestDate;
+            storedChat.updatedAt = latestDate;
+            changed = true;
+          }
+          if (storedChat.whatsappId !== chatId) {
+            storedChat.whatsappId = storedChat.whatsappId || chatId;
+            changed = true;
+          }
+          if (
+            displayName &&
+            shouldRefreshChatName(storedChat.contactName, identifier) &&
+            !/^\d+$/.test(displayName.replace(/\D/g, ''))
+          ) {
+            storedChat.contactName = displayName;
+            changed = true;
+          }
+          if (changed) await storedChat.save();
         }
 
-        console.log(`[HISTORICO] Sincronizacao concluida: ${imported} registros (${importedCalls} chamadas) e ${downloadedMedia} midias importadas.`);
-        if (ioInstance) ioInstance.emit('history_sync_complete', { imported, importedCalls, downloadedMedia, limitPerChat: historySyncLimit });
-        return { imported, importedCalls, downloadedMedia, limitPerChat: historySyncLimit };
-    })().finally(() => { historySyncPromise = null; });
+        const ids = recent.map(getStoredHistoryMessageId).filter(Boolean);
+        const existing = await Message.find({ whatsappMessageId: { $in: ids } })
+          .select('_id whatsappMessageId hasMedia')
+          .lean();
+        const existingById = new Map(existing.map((item) => [item.whatsappMessageId, item]));
+        const legacyMessages = await Message.find({
+          ticketId: storedChat._id,
+          whatsappMessageId: '',
+          timestamp: { $gte: new Date(cutoff) },
+        })
+          .select('_id sender body timestamp')
+          .lean();
+        const storedCalls = await Message.find({
+          ticketId: storedChat._id,
+          isInternalEvent: true,
+          internalAction: { $in: ['call_received', 'call_made', 'call_missed', 'call_rejected'] },
+          timestamp: { $gte: new Date(cutoff) },
+        })
+          .select('body timestamp')
+          .lean();
+        const seenCallSignatures = new Set(
+          storedCalls.map((item) => getCallSignature(storedChat._id, item.body, item.timestamp)),
+        );
+        const documents = [];
+        const legacyUpdates = [];
 
-    return historySyncPromise;
+        for (const msg of recent) {
+          const whatsappMessageId = getStoredHistoryMessageId(msg);
+          if (!whatsappMessageId) continue;
+
+          const storedMessage = existingById.get(whatsappMessageId);
+          if (storedMessage) {
+            if (isCallLogMessage(msg)) continue;
+            const correctedBody = await displayMessageText(msg, client);
+            if (correctedBody && storedMessage.body !== correctedBody)
+              await Message.updateOne(
+                { _id: storedMessage._id },
+                { $set: { body: correctedBody } },
+              );
+            if (msg.hasMedia && !storedMessage.hasMedia) {
+              const storedMedia = await saveHistoricalMessageMedia(msg);
+              if (storedMedia) {
+                await Message.updateOne({ _id: storedMessage._id }, { $set: storedMedia });
+                downloadedMedia += 1;
+              }
+            }
+            continue;
+          }
+
+          const callEvent = isCallLogMessage(msg)
+            ? getCallEventDetails({ ...msg._data, ...msg, isFinal: true })
+            : null;
+          const sender = msg.fromMe ? 'agent' : 'client';
+          const body = callEvent?.body || (await displayMessageText(msg, client));
+          const timestamp = new Date(Number(msg.timestamp) * 1000);
+          if (callEvent) {
+            const callSignature = getCallSignature(storedChat._id, body, timestamp);
+            if (seenCallSignatures.has(callSignature)) continue;
+            seenCallSignatures.add(callSignature);
+          }
+          const mediaInfo = callEvent ? null : await saveHistoricalMessageMedia(msg);
+          if (mediaInfo) downloadedMedia += 1;
+          const legacyIndex = legacyMessages.findIndex(
+            (item) =>
+              item.sender === sender &&
+              item.body === body &&
+              Math.abs(new Date(item.timestamp).getTime() - timestamp.getTime()) <= 10000,
+          );
+          if (legacyIndex >= 0) {
+            const [legacy] = legacyMessages.splice(legacyIndex, 1);
+            legacyUpdates.push({
+              updateOne: {
+                filter: { _id: legacy._id },
+                update: { $set: { whatsappMessageId, ...(mediaInfo || {}) } },
+              },
+            });
+            continue;
+          }
+
+          let groupSenderId = '';
+          let groupSenderName = '';
+          if (isGroup && !msg.fromMe) {
+            groupSenderId = msg.author || msg._data?.author || '';
+            if (participantNames.has(groupSenderId)) {
+              groupSenderName = participantNames.get(groupSenderId);
+            } else {
+              try {
+                const participant = await client.getContactById(groupSenderId);
+                groupSenderName =
+                  participant?.name || participant?.verifiedName || participant?.pushname || '';
+              } catch (err) {}
+              groupSenderName =
+                groupSenderName ||
+                msg._data?.notifyName ||
+                groupSenderId.replace(/@.+$/, '') ||
+                'Participante';
+              participantNames.set(groupSenderId, groupSenderName);
+            }
+          }
+
+          documents.push({
+            ticketId: storedChat._id,
+            phoneNumber: identifier,
+            whatsappMessageId,
+            sender,
+            groupSenderId,
+            groupSenderName,
+            body,
+            ...(callEvent
+              ? { isInternalEvent: true, internalAction: callEvent.internalAction }
+              : {}),
+            ack: Number.isInteger(msg.ack) ? msg.ack : 0,
+            timestamp,
+            ...(mediaInfo || {}),
+          });
+        }
+
+        if (legacyUpdates.length) await Message.bulkWrite(legacyUpdates);
+        if (documents.length) {
+          await Message.insertMany(documents, { ordered: false });
+          imported += documents.length;
+          importedCalls += documents.filter((document) =>
+            document.internalAction?.startsWith('call_'),
+          ).length;
+        }
+      } catch (err) {
+        console.warn(`[HISTORICO] Falha ao sincronizar ${chatId}: ${err.message || err}`);
+      }
+    }
+
+    console.log(
+      `[HISTORICO] Sincronizacao concluida: ${imported} registros (${importedCalls} chamadas) e ${downloadedMedia} midias importadas.`,
+    );
+    if (ioInstance)
+      ioInstance.emit('history_sync_complete', {
+        imported,
+        importedCalls,
+        downloadedMedia,
+        limitPerChat: historySyncLimit,
+      });
+    return { imported, importedCalls, downloadedMedia, limitPerChat: historySyncLimit };
+  })().finally(() => {
+    historySyncPromise = null;
+  });
+
+  return historySyncPromise;
 }
 
 async function getGroupMembers(chatId) {
-    if (!isClientReady || !client) throw new Error('O serviço de WhatsApp não está pronto.');
-    if (!chatId?.endsWith('@g.us')) throw new Error('Esta conversa não é um grupo.');
-    return client.pupPage.evaluate(async id => {
-        const serialize = value => typeof value === 'string' ? value : value?._serialized || value?.$1 || '';
-        const wid = window.require('WAWebWidFactory').createWid(id);
-        await window.require('WAWebGroupQueryJob').queryAndUpdateGroupMetadataById({ id });
-        const collections = window.require('WAWebCollections');
-        const chat = collections.Chat.get(wid);
-        const metadata = chat?.groupMetadata || collections.GroupMetadata?.get(wid);
-        const participants = metadata?.participants?.getModelsArray?.();
-        if (!participants) throw new Error('Não foi possível carregar os membros do grupo.');
-        return participants.map(participant => {
-            const memberId = serialize(participant.id);
-            let alternate;
-            try { alternate = window.require('WAWebApiContact').getAlternateUserWid(participant.id); } catch {}
-            const contact = collections.Contact.get(participant.id) || collections.Contact.get(alternate);
-            const phoneId = [memberId, serialize(alternate)].find(value => value.endsWith('@c.us')) || '';
-            return {
-                id: memberId,
-                name: contact?.name || contact?.verifiedName || contact?.pushname || '',
-                phoneNumber: phoneId.split('@')[0],
-                isAdmin: Boolean(participant.isAdmin || participant.isSuperAdmin)
-            };
-        });
-    }, chatId);
+  if (!isClientReady || !client) throw new Error('O serviço de WhatsApp não está pronto.');
+  if (!chatId?.endsWith('@g.us')) throw new Error('Esta conversa não é um grupo.');
+  return client.pupPage.evaluate(async (id) => {
+    const serialize = (value) =>
+      typeof value === 'string' ? value : value?._serialized || value?.$1 || '';
+    const wid = window.require('WAWebWidFactory').createWid(id);
+    await window.require('WAWebGroupQueryJob').queryAndUpdateGroupMetadataById({ id });
+    const collections = window.require('WAWebCollections');
+    const chat = collections.Chat.get(wid);
+    const metadata = chat?.groupMetadata || collections.GroupMetadata?.get(wid);
+    const participants = metadata?.participants?.getModelsArray?.();
+    if (!participants) throw new Error('Não foi possível carregar os membros do grupo.');
+    return participants.map((participant) => {
+      const memberId = serialize(participant.id);
+      let alternate;
+      try {
+        alternate = window.require('WAWebApiContact').getAlternateUserWid(participant.id);
+      } catch {}
+      const contact = collections.Contact.get(participant.id) || collections.Contact.get(alternate);
+      const phoneId =
+        [memberId, serialize(alternate)].find((value) => value.endsWith('@c.us')) || '';
+      return {
+        id: memberId,
+        name: contact?.name || contact?.verifiedName || contact?.pushname || '',
+        phoneNumber: phoneId.split('@')[0],
+        isAdmin: Boolean(participant.isAdmin || participant.isSuperAdmin),
+      };
+    });
+  }, chatId);
 }
 
 async function getChatMetadata(chatId) {
-    if (!isClientReady || !client || !chatId) return null;
+  if (!isClientReady || !client || !chatId) return null;
 
-    try {
-        const internalChat = await client.pupPage.evaluate(async (id) => {
-            try {
-                const wid = window.require('WAWebWidFactory').createWid(id);
+  try {
+    const internalChat = await client.pupPage.evaluate(async (id) => {
+      try {
+        const wid = window.require('WAWebWidFactory').createWid(id);
 
-                if (id.includes('@g.us')) {
-                    try {
-                        await window
-                            .require('WAWebGroupQueryJob')
-                            .queryAndUpdateGroupMetadataById({ id });
-                    } catch (err) {}
-                }
-
-                let chat = window.require('WAWebCollections').Chat.get(wid);
-                if (!chat) {
-                    const result = await window
-                        .require('WAWebFindChatAction')
-                        .findOrCreateLatestChat(wid);
-                    chat = result?.chat || result;
-                }
-
-                if (!chat) return null;
-
-                const collections = window.require('WAWebCollections');
-                const groupMetadata = chat.groupMetadata || collections.GroupMetadata?.get(wid);
-                return {
-                    id: chat.id?._serialized || chat.id?.$1 || id,
-                    name: groupMetadata?.subject || chat.formattedTitle || chat.name || '',
-                    isGroup: Boolean(chat.isGroup || id.includes('@g.us'))
-                };
-            } catch (err) {
-                return null;
-            }
-        }, chatId);
-
-        let chat = null;
-        if (!internalChat?.name) {
-            try {
-                chat = await client.getChatById(chatId);
-            } catch (err) {}
+        if (id.includes('@g.us')) {
+          try {
+            await window.require('WAWebGroupQueryJob').queryAndUpdateGroupMetadataById({ id });
+          } catch (err) {}
         }
 
-        if (!internalChat && !chat) return null;
+        let chat = window.require('WAWebCollections').Chat.get(wid);
+        if (!chat) {
+          const result = await window.require('WAWebFindChatAction').findOrCreateLatestChat(wid);
+          chat = result?.chat || result;
+        }
 
+        if (!chat) return null;
+
+        const collections = window.require('WAWebCollections');
+        const groupMetadata = chat.groupMetadata || collections.GroupMetadata?.get(wid);
         return {
-            id: internalChat?.id || chat?.id?._serialized || chatId,
-            name: internalChat?.name || getChatDisplayName(chat),
-            isGroup: Boolean(internalChat?.isGroup || chat?.isGroup || chatId.includes('@g.us')),
-            profilePicUrl: await getProfilePicUrl(internalChat?.id || chat?.id?._serialized || chatId)
+          id: chat.id?._serialized || chat.id?.$1 || id,
+          name: groupMetadata?.subject || chat.formattedTitle || chat.name || '',
+          isGroup: Boolean(chat.isGroup || id.includes('@g.us')),
         };
-    } catch (err) {
-        console.warn(`[CHAT] Nao foi possivel carregar os metadados de ${chatId}: ${err.message || err}`);
+      } catch (err) {
         return null;
+      }
+    }, chatId);
+
+    let chat = null;
+    if (!internalChat?.name) {
+      try {
+        chat = await client.getChatById(chatId);
+      } catch (err) {}
     }
+
+    if (!internalChat && !chat) return null;
+
+    return {
+      id: internalChat?.id || chat?.id?._serialized || chatId,
+      name: internalChat?.name || getChatDisplayName(chat),
+      isGroup: Boolean(internalChat?.isGroup || chat?.isGroup || chatId.includes('@g.us')),
+      profilePicUrl: await getProfilePicUrl(internalChat?.id || chat?.id?._serialized || chatId),
+    };
+  } catch (err) {
+    console.warn(
+      `[CHAT] Nao foi possivel carregar os metadados de ${chatId}: ${err.message || err}`,
+    );
+    return null;
+  }
 }
 
 function initWhatsApp(io) {
-    ioInstance = io;
+  ioInstance = io;
 
-    client = new Client({
-        authStrategy: new LocalAuth({ dataPath: config.authPath }),
-        webVersionCache: {
-            type: 'remote',
-            remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version-check/main/html/2.3000.1018939023-alpha.html',
-        },
-        puppeteer: {
-            ...config.puppeteer,
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--no-first-run',
-                '--no-zygote',
-                '--disable-gpu'
-            ],
-            timeout: 120000 
+  client = new Client({
+    authStrategy: new LocalAuth({ dataPath: config.authPath }),
+    webVersionCache: {
+      type: 'remote',
+      remotePath:
+        'https://raw.githubusercontent.com/wppconnect-team/wa-version-check/main/html/2.3000.1018939023-alpha.html',
+    },
+    puppeteer: {
+      ...config.puppeteer,
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-gpu',
+      ],
+      timeout: 120000,
+    },
+  });
+
+  client.on('qr', (qr) => {
+    isClientReady = false;
+    currentQrCode = qr;
+    qrcodeTerminal.generate(qr, { small: true });
+    console.log('📌 QR Code gerado!');
+    if (ioInstance) ioInstance.emit('qr_code', { qr });
+  });
+
+  console.log('⏳ Iniciando navegador e carregando o WhatsApp Web...');
+
+  client.on('loading_screen', (percent, message) => {
+    console.log(`⏳ Carregando: ${percent}% - ${message}`);
+  });
+
+  client.on('authenticated', () => {
+    console.log('🔑 Autenticado com sucesso no WhatsApp Web!');
+  });
+
+  client.on('ready', () => {
+    isClientReady = true;
+    currentQrCode = null;
+    console.log('🚀 Cliente WhatsApp Pronto para Uso!');
+    setTimeout(async () => {
+      try {
+        const result = await client.pupPage.evaluate(() => {
+          const collection = window.require('WAWebCallCollection');
+          const serializeCall = (value) => ({
+            id: value.id,
+            peerJid: value.peerJid,
+            isVideo: value.isVideo,
+            isGroup: value.isGroup,
+            outgoing: value.outgoing,
+            offerTime: value.offerTime,
+          });
+          let eventCaptureInstalled = false;
+          if (
+            collection &&
+            typeof collection.on === 'function' &&
+            !collection.__sngCallEventsInstalled
+          ) {
+            const forwardCall = (value) => window.onIncomingCall(serializeCall(value));
+            collection.on('add', forwardCall);
+            collection.on('change', forwardCall);
+            collection.__sngCallEventsInstalled = true;
+            eventCaptureInstalled = true;
+          }
+          const mapKey = Object.keys(collection).find((key) => collection[key] instanceof Map);
+          const callMap = mapKey ? collection[mapKey] : null;
+          if (!callMap) return 'collection-unavailable';
+          if (callMap.__sngCallCaptureInstalled)
+            return eventCaptureInstalled ? 'events-and-map-already-installed' : 'already-installed';
+          const originalSet = callMap.set.bind(callMap);
+          callMap.set = function (key, value) {
+            window.onIncomingCall(serializeCall(value));
+            return originalSet(key, value);
+          };
+          callMap.__sngCallCaptureInstalled = true;
+          return eventCaptureInstalled ? 'events-and-map-installed' : 'map-installed';
+        });
+        console.log(`[WHATSAPP] Captura interna de chamadas: ${result}`);
+      } catch (err) {
+        console.warn(`[WHATSAPP] Não foi possível instalar captura interna: ${err.message || err}`);
+      }
+    }, 3000);
+    // O evento ready pode ocorrer antes de o cache de chats terminar de
+    // carregar. Dar esse tempo evita o erro minificado "r" do WhatsApp.
+    setTimeout(() => {
+      if (!isClientReady) return;
+      syncRecentMessages().catch((err) =>
+        console.error('[HISTORICO] Falha na sincronizacao:', err?.stack || err?.message || err),
+      );
+    }, 15000);
+  });
+
+  client.on('auth_failure', (msg) => {
+    console.error('❌ Falha na autenticação:', msg);
+    isClientReady = false;
+  });
+
+  const handleIncomingCall = async (call) => {
+    const whatsappId = String(call.from || call.peerJid || '');
+    console.log(`[WHATSAPP] Chamada recebida de ${whatsappId || 'origem desconhecida'}`);
+    if (!whatsappId) return;
+
+    try {
+      const callId = call.id ? `${call.isFinal ? 'call-log' : 'call'}:${String(call.id)}` : '';
+      if (callId && (await Message.exists({ whatsappMessageId: callId }))) return;
+      const fromMe = Boolean(call.fromMe ?? call.outgoing);
+      const callDate = new Date(
+        (Number(call.timestamp || call.offerTime) || Date.now() / 1000) * 1000,
+      );
+      const { internalAction, body } = getCallEventDetails(call);
+      const callSignature = getCallSignature(whatsappId, body, callDate);
+      if (recentCallEvents.has(callSignature)) return;
+      recentCallEvents.set(callSignature, Date.now());
+      setTimeout(() => recentCallEvents.delete(callSignature), 10 * 60 * 1000);
+
+      const isGroup = Boolean(call.isGroup || whatsappId.endsWith('@g.us'));
+      let contactName = isGroup ? 'Grupo' : '';
+      let phoneNumber = isGroup ? whatsappId : whatsappId.replace(/\D/g, '');
+      let profilePicUrl = '';
+
+      try {
+        if (isGroup) {
+          const chat = await client.getChatById(whatsappId);
+          contactName = getChatDisplayName(chat, contactName);
+        } else {
+          const contact = await client.getContactById(whatsappId);
+          contactName = contact?.name || contact?.verifiedName || contact?.pushname || '';
+          phoneNumber =
+            contact?.number?.replace(/\D/g, '') ||
+            (!String(contact?.id?.user || '').includes('@') ? contact?.id?.user : '') ||
+            phoneNumber;
         }
+        profilePicUrl = (await getProfilePicUrl(whatsappId)) || '';
+      } catch (err) {}
+
+      let chat = await Chat.findOne({ $or: [{ whatsappId }, { phoneNumber }] });
+      if (
+        chat &&
+        (await Message.exists({
+          ticketId: chat._id,
+          isInternalEvent: true,
+          internalAction,
+          body,
+          timestamp: {
+            $gte: new Date(callDate.getTime() - 5000),
+            $lte: new Date(callDate.getTime() + 5000),
+          },
+        }))
+      )
+        return;
+      if (!chat) {
+        chat = await Chat.create({
+          phoneNumber,
+          whatsappId,
+          contactName: contactName || phoneNumber,
+          profilePicUrl,
+          isGroup,
+          status: 'pending',
+          lastMessage: body,
+          lastMessageAt: callDate,
+        });
+      } else {
+        chat.whatsappId = whatsappId || chat.whatsappId;
+        chat.lastMessage = body;
+        chat.lastMessageAt = callDate;
+        chat.isTemporary = false;
+        if (contactName) chat.contactName = contactName;
+        if (profilePicUrl) chat.profilePicUrl = profilePicUrl;
+        if (chat.status === 'closed') chat.status = 'pending';
+        chat.updatedAt = Date.now();
+        await chat.save();
+      }
+
+      const savedCall = await Message.create({
+        ticketId: chat._id,
+        phoneNumber: chat.phoneNumber,
+        whatsappMessageId: callId,
+        sender: fromMe ? 'agent' : 'client',
+        isInternalEvent: true,
+        internalAction,
+        body,
+        timestamp: callDate,
+      });
+      const message = {
+        id: savedCall._id.toString(),
+        ticketId: chat._id.toString(),
+        sender: fromMe ? 'agent' : 'client',
+        body,
+        isInternalEvent: true,
+        internalAction,
+        timestamp: savedCall.timestamp,
+        fromMe,
+      };
+
+      if (ioInstance) ioInstance.emit('new_message', { chat, message });
+      console.log(`[WHATSAPP] Chamada registrada na conversa ${chat._id}`);
+    } catch (err) {
+      console.error('Erro ao registrar chamada recebida:', err?.stack || err?.message || err);
+    }
+  };
+
+  client.on('call', handleIncomingCall);
+  client.on('message_create', async (msg) => {
+    if (msg.type !== 'call_log' && msg._data?.type !== 'call_log') return;
+    if (!msg.fromMe) return;
+    await handleIncomingCall({
+      id: getWhatsAppMessageId(msg),
+      peerJid: msg.fromMe ? msg.to : msg.from,
+      fromMe: Boolean(msg.fromMe),
+      isVideo: Boolean(msg._data?.isVideoCall || msg._data?.isVideo),
+      isGroup: Boolean(msg.from?.endsWith('@g.us') || msg.to?.endsWith('@g.us')),
+      timestamp: msg.timestamp,
+      outcome: msg._data?.callOutcome || msg._data?.callStatus || msg._data?.subtype,
+      duration: msg._data?.callDuration || msg.duration,
+      isFinal: true,
     });
+  });
 
-    client.on('qr', (qr) => {
-        isClientReady = false;
-        currentQrCode = qr;
-        qrcodeTerminal.generate(qr, { small: true });
-        console.log('📌 QR Code gerado!');
-        if (ioInstance) ioInstance.emit('qr_code', { qr });
-    });
+  const pollCalls = async () => {
+    if (!isClientReady || !client?.pupPage) return;
+    try {
+      const calls = await client.pupPage.evaluate(() => {
+        const collection = window.require('WAWebCallCollection');
+        const mapKey = Object.keys(collection).find((key) => collection[key] instanceof Map);
+        const callMap = mapKey ? collection[mapKey] : null;
+        return callMap
+          ? [...callMap.values()].map((call) => ({
+              id: call.id,
+              peerJid: call.peerJid,
+              isVideo: call.isVideo,
+              isGroup: call.isGroup,
+              outgoing: call.outgoing,
+              offerTime: call.offerTime,
+            }))
+          : [];
+      });
+      for (const call of calls) {
+        const timestamp = Number(call.offerTime || 0) * 1000;
+        if (timestamp && Date.now() - timestamp > 10 * 60 * 1000) continue;
+        await handleIncomingCall(call);
+      }
+    } catch (err) {
+      console.warn(`[WHATSAPP] Falha ao consultar chamadas: ${err.message || err}`);
+    }
+  };
+  callPollTimer = setInterval(pollCalls, 2000);
 
-    console.log('⏳ Iniciando navegador e carregando o WhatsApp Web...');
+  client.on('message', async (msg) => {
+    if (msg.isStatus || msg.from === 'status@broadcast' || msg.to === 'status@broadcast') return;
 
-    client.on('loading_screen', (percent, message) => {
-        console.log(`⏳ Carregando: ${percent}% - ${message}`);
-    });
+    try {
+      if (msg.type === 'call_log' || msg._data?.type === 'call_log') {
+        await handleIncomingCall({
+          id: getWhatsAppMessageId(msg),
+          peerJid: msg.fromMe ? msg.to : msg.from,
+          fromMe: Boolean(msg.fromMe),
+          isVideo: Boolean(msg._data?.isVideoCall || msg._data?.isVideo),
+          isGroup: Boolean(msg.from?.endsWith('@g.us') || msg.to?.endsWith('@g.us')),
+          timestamp: msg.timestamp,
+          outcome: msg._data?.callOutcome || msg._data?.callStatus || msg._data?.subtype,
+          duration: msg._data?.callDuration || msg.duration,
+          isFinal: true,
+        });
+        return;
+      }
 
-    client.on('authenticated', () => {
-        console.log('🔑 Autenticado com sucesso no WhatsApp Web!');
-    });
+      let senderName = '';
+      let identifier = '';
+      let profilePicUrl = '';
+      let whatsappId = msg.from;
+      let isGroupChat = msg.from.includes('@g.us');
+      let groupSenderId = '';
+      let groupSenderName = '';
 
-    client.on('ready', () => {
-        isClientReady = true;
-        currentQrCode = null;
-        console.log('🚀 Cliente WhatsApp Pronto para Uso!');
-        setTimeout(async () => {
-            try {
-                const result = await client.pupPage.evaluate(() => {
-                    const collection = window.require('WAWebCallCollection');
-                    const serializeCall = value => ({
-                        id: value.id,
-                        peerJid: value.peerJid,
-                        isVideo: value.isVideo,
-                        isGroup: value.isGroup,
-                        outgoing: value.outgoing,
-                        offerTime: value.offerTime
-                    });
-                    let eventCaptureInstalled = false;
-                    if (collection && typeof collection.on === 'function' && !collection.__sngCallEventsInstalled) {
-                        const forwardCall = value => window.onIncomingCall(serializeCall(value));
-                        collection.on('add', forwardCall);
-                        collection.on('change', forwardCall);
-                        collection.__sngCallEventsInstalled = true;
-                        eventCaptureInstalled = true;
-                    }
-                    const mapKey = Object.keys(collection).find(key => collection[key] instanceof Map);
-                    const callMap = mapKey ? collection[mapKey] : null;
-                    if (!callMap) return 'collection-unavailable';
-                    if (callMap.__sngCallCaptureInstalled) return eventCaptureInstalled ? 'events-and-map-already-installed' : 'already-installed';
-                    const originalSet = callMap.set.bind(callMap);
-                    callMap.set = function(key, value) {
-                        window.onIncomingCall(serializeCall(value));
-                        return originalSet(key, value);
-                    };
-                    callMap.__sngCallCaptureInstalled = true;
-                    return eventCaptureInstalled ? 'events-and-map-installed' : 'map-installed';
-                });
-                console.log(`[WHATSAPP] Captura interna de chamadas: ${result}`);
-            } catch (err) {
-                console.warn(`[WHATSAPP] Não foi possível instalar captura interna: ${err.message || err}`);
-            }
-        }, 3000);
-        // O evento ready pode ocorrer antes de o cache de chats terminar de
-        // carregar. Dar esse tempo evita o erro minificado "r" do WhatsApp.
-        setTimeout(() => {
-            if (!isClientReady) return;
-            syncRecentMessages().catch(err => console.error('[HISTORICO] Falha na sincronizacao:', err?.stack || err?.message || err));
-        }, 15000);
-    });
-
-    client.on('auth_failure', (msg) => {
-        console.error('❌ Falha na autenticação:', msg);
-        isClientReady = false;
-    });
-
-    const handleIncomingCall = async call => {
-        const whatsappId = String(call.from || call.peerJid || '');
-        console.log(`[WHATSAPP] Chamada recebida de ${whatsappId || 'origem desconhecida'}`);
-        if (!whatsappId) return;
+      if (isGroupChat) {
+        identifier = msg.from;
+        groupSenderId = msg.author || msg._data?.author || '';
+        try {
+          const chat = await msg.getChat();
+          senderName = getChatDisplayName(chat, 'Grupo sem nome');
+          try {
+            profilePicUrl = await getProfilePicUrl(chat.id._serialized);
+          } catch (err) {}
+        } catch (e) {
+          senderName = 'Grupo';
+        }
 
         try {
-            const callId = call.id ? `${call.isFinal ? 'call-log' : 'call'}:${String(call.id)}` : '';
-            if (callId && await Message.exists({ whatsappMessageId: callId })) return;
-            const fromMe = Boolean(call.fromMe ?? call.outgoing);
-            const callDate = new Date((Number(call.timestamp || call.offerTime) || Date.now() / 1000) * 1000);
-            const { internalAction, body } = getCallEventDetails(call);
-            const callSignature = getCallSignature(whatsappId, body, callDate);
-            if (recentCallEvents.has(callSignature)) return;
-            recentCallEvents.set(callSignature, Date.now());
-            setTimeout(() => recentCallEvents.delete(callSignature), 10 * 60 * 1000);
+          const participant = groupSenderId
+            ? await client.getContactById(groupSenderId)
+            : await msg.getContact();
+          groupSenderName =
+            participant?.name || participant?.verifiedName || participant?.pushname || '';
+          groupSenderId = participant?.id?._serialized || groupSenderId;
+        } catch (err) {}
 
-            const isGroup = Boolean(call.isGroup || whatsappId.endsWith('@g.us'));
-            let contactName = isGroup ? 'Grupo' : '';
-            let phoneNumber = isGroup ? whatsappId : whatsappId.replace(/\D/g, '');
-            let profilePicUrl = '';
+        if (!groupSenderName) {
+          groupSenderName =
+            msg._data?.notifyName || groupSenderId.replace(/@.+$/, '') || 'Participante';
+        }
+      } else {
+        let cleanPhone = '';
+        try {
+          const contact = await msg.getContact();
+          if (
+            [contact.name, contact.verifiedName, contact.pushname].some(
+              (name) =>
+                String(name || '')
+                  .trim()
+                  .toLowerCase() === 'whatsapp business',
+            )
+          )
+            return;
+          whatsappId = contact.id?._serialized || msg.from;
 
+          let timerFoto;
+
+          try {
+            console.log('[FOTO] Iniciando consulta');
+
+            const resultado = await Promise.race([
+              getProfilePicUrl(contact.id._serialized),
+
+              new Promise((_, reject) => {
+                timerFoto = setTimeout(() => {
+                  reject(new Error('Consulta não respondeu em 10 segundos'));
+                }, 10000);
+              }),
+            ]);
+
+            console.log('[FOTO] Consulta concluída:', resultado);
+
+            profilePicUrl = resultado || '';
+          } catch (erro) {
+            console.error('[FOTO] ERRO:', erro.stack || erro);
+          } finally {
+            clearTimeout(timerFoto);
+          }
+
+          if (contact.id && contact.id.user && !contact.id.user.includes('@')) {
+            cleanPhone = contact.id.user;
+          } else if (contact.number) {
+            cleanPhone = contact.number.replace(/\D/g, '');
+          }
+
+          if ((!cleanPhone || cleanPhone.length < 8) && contact.id && contact.id._serialized) {
+            const serialized = contact.id._serialized;
+            if (!serialized.includes('@lid')) {
+              cleanPhone = serialized.replace(/\D/g, '');
+            }
+          }
+
+          if (!cleanPhone || cleanPhone.length < 8) {
+            const chat = await msg.getChat();
+            if (chat && chat.id && chat.id.user && !chat.id.user.includes('@')) {
+              cleanPhone = chat.id.user;
+            } else {
+              cleanPhone = msg.from.replace(/\D/g, '');
+            }
+          }
+
+          senderName = contact.name || contact.verifiedName || contact.pushname || '';
+        } catch (e) {
+          cleanPhone = msg.from.replace(/\D/g, '');
+        }
+        identifier = cleanPhone.replace(/\D/g, '');
+      }
+
+      if (!profilePicUrl) {
+        try {
+          const chat = await msg.getChat();
+          if (chat) {
+            profilePicUrl = await getProfilePicUrl(chat.id._serialized);
+          }
+        } catch (err) {}
+      }
+
+      if (!isGroupChat && senderName?.trim().toLowerCase() === 'whatsapp business') return;
+      const bodyContent = await displayMessageText(msg, client);
+      const messageDate = new Date((Number(msg.timestamp) || Date.now() / 1000) * 1000);
+      const mediaInfo = await saveMessageMedia(msg);
+      const quotedInfo = await getQuotedContext(msg);
+
+      let chat = await Chat.findOne({ phoneNumber: identifier });
+      if (!chat) {
+        chat = await Chat.create({
+          phoneNumber: identifier,
+          whatsappId,
+          contactName: senderName,
+          profilePicUrl: profilePicUrl || '',
+          isGroup: isGroupChat,
+          status: 'pending',
+          lastMessage: bodyContent,
+          lastMessageAt: messageDate,
+        });
+      } else {
+        chat.lastMessage = bodyContent;
+        chat.lastMessageAt = messageDate;
+        chat.isTemporary = false;
+        chat.whatsappId = whatsappId || chat.whatsappId;
+        if (senderName) chat.contactName = senderName;
+        if (profilePicUrl) chat.profilePicUrl = profilePicUrl;
+        if (chat.status === 'closed') chat.status = 'pending';
+        chat.updatedAt = Date.now();
+        await chat.save();
+      }
+
+      const savedDbMessage = await Message.create({
+        ticketId: chat._id,
+        phoneNumber: identifier,
+        whatsappMessageId: getWhatsAppMessageId(msg),
+        sender: 'client',
+        groupSenderId,
+        groupSenderName,
+        body: bodyContent,
+        ...quotedInfo,
+        ...(mediaInfo || {}),
+      });
+
+      const msgData = {
+        id: savedDbMessage._id.toString(),
+        whatsappMessageId: savedDbMessage.whatsappMessageId,
+        ticketId: chat._id.toString(),
+        from: msg.from,
+        senderName: isGroupChat ? groupSenderName : senderName || identifier,
+        groupSenderId,
+        groupSenderName,
+        phoneNumber: identifier,
+        ...quotedInfo,
+        profilePicUrl: profilePicUrl || '',
+        body: bodyContent,
+        hasMedia: Boolean(mediaInfo),
+        mediaUrl: mediaInfo ? `/api/messages/${savedDbMessage._id}/media` : null,
+        mediaMimeType: mediaInfo?.mediaMimeType || '',
+        mediaFileName: mediaInfo?.mediaFileName || '',
+        timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        sentAt: savedDbMessage.timestamp,
+        fromMe: false,
+      };
+
+      recentMessages.set(msg.from, msg);
+      setTimeout(() => recentMessages.delete(msg.from), 10 * 60 * 1000);
+
+      if (ioInstance) {
+        ioInstance.emit('new_message', {
+          chat,
+          message: msgData,
+        });
+      }
+    } catch (err) {
+      console.error('Erro no processamento da mensagem recebida:', err.message);
+    }
+  });
+
+  client.on('message_create', async (msg) => {
+    if (msg.type === 'call_log' || msg._data?.type === 'call_log') return;
+    if (!msg.fromMe || msg.from === 'status@broadcast') return;
+
+    try {
+      const targetChatId = msg.to || msg.id.remote;
+      const whatsappId = targetChatId;
+      const isGroupChat = targetChatId.includes('@g.us');
+
+      let identifier = '';
+      let chatName = '';
+      let profilePicUrl = '';
+
+      if (isGroupChat) {
+        identifier = targetChatId;
+        try {
+          const chat = await client.getChatById(targetChatId);
+          chatName = getChatDisplayName(chat, 'Grupo sem nome');
+          profilePicUrl = await getProfilePicUrl(chat.id._serialized);
+        } catch (e) {
+          chatName = 'Grupo';
+        }
+      } else {
+        let cleanId = targetChatId;
+        try {
+          const contact = await client.getContactById(targetChatId);
+          if (contact) {
             try {
-                if (isGroup) {
-                    const chat = await client.getChatById(whatsappId);
-                    contactName = getChatDisplayName(chat, contactName);
-                } else {
-                    const contact = await client.getContactById(whatsappId);
-                    contactName = contact?.name || contact?.verifiedName || contact?.pushname || '';
-                    phoneNumber = contact?.number?.replace(/\D/g, '')
-                        || (!String(contact?.id?.user || '').includes('@') ? contact?.id?.user : '')
-                        || phoneNumber;
-                }
-                profilePicUrl = await getProfilePicUrl(whatsappId) || '';
+              profilePicUrl = await getProfilePicUrl(contact.id._serialized);
             } catch (err) {}
 
-            let chat = await Chat.findOne({ $or: [{ whatsappId }, { phoneNumber }] });
-            if (chat && await Message.exists({
-                ticketId: chat._id,
-                isInternalEvent: true,
-                internalAction,
-                body,
-                timestamp: { $gte: new Date(callDate.getTime() - 5000), $lte: new Date(callDate.getTime() + 5000) }
-            })) return;
-            if (!chat) {
-                chat = await Chat.create({
-                    phoneNumber,
-                    whatsappId,
-                    contactName: contactName || phoneNumber,
-                    profilePicUrl,
-                    isGroup,
-                    status: 'pending',
-                    lastMessage: body,
-                    lastMessageAt: callDate
-                });
-            } else {
-                chat.whatsappId = whatsappId || chat.whatsappId;
-                chat.lastMessage = body;
-                chat.lastMessageAt = callDate;
-                chat.isTemporary = false;
-                if (contactName) chat.contactName = contactName;
-                if (profilePicUrl) chat.profilePicUrl = profilePicUrl;
-                if (chat.status === 'closed') chat.status = 'pending';
-                chat.updatedAt = Date.now();
-                await chat.save();
+            if (contact.id && contact.id.user && !contact.id.user.includes('@')) {
+              identifier = contact.id.user;
+            } else if (contact.number) {
+              identifier = contact.number.replace(/\D/g, '');
             }
 
-            const savedCall = await Message.create({
-                ticketId: chat._id,
-                phoneNumber: chat.phoneNumber,
-                whatsappMessageId: callId,
-                sender: fromMe ? 'agent' : 'client',
-                isInternalEvent: true,
-                internalAction,
-                body,
-                timestamp: callDate
-            });
-            const message = {
-                id: savedCall._id.toString(),
-                ticketId: chat._id.toString(),
-                sender: fromMe ? 'agent' : 'client',
-                body,
-                isInternalEvent: true,
-                internalAction,
-                timestamp: savedCall.timestamp,
-                fromMe
-            };
+            chatName = contact.name || contact.verifiedName || contact.pushname || '';
+          }
+        } catch (e) {}
 
-            if (ioInstance) ioInstance.emit('new_message', { chat, message });
-            console.log(`[WHATSAPP] Chamada registrada na conversa ${chat._id}`);
-        } catch (err) {
-            console.error('Erro ao registrar chamada recebida:', err?.stack || err?.message || err);
+        if (!identifier || identifier.length < 8) {
+          identifier = cleanId.replace(/\D/g, '');
         }
-    };
 
-    client.on('call', handleIncomingCall);
-    client.on('message_create', async msg => {
-        if (msg.type !== 'call_log' && msg._data?.type !== 'call_log') return;
-        if (!msg.fromMe) return;
-        await handleIncomingCall({
-            id: getWhatsAppMessageId(msg),
-            peerJid: msg.fromMe ? msg.to : msg.from,
-            fromMe: Boolean(msg.fromMe),
-            isVideo: Boolean(msg._data?.isVideoCall || msg._data?.isVideo),
-            isGroup: Boolean(msg.from?.endsWith('@g.us') || msg.to?.endsWith('@g.us')),
-            timestamp: msg.timestamp,
-            outcome: msg._data?.callOutcome || msg._data?.callStatus || msg._data?.subtype,
-            duration: msg._data?.callDuration || msg.duration,
-            isFinal: true
+        if (!chatName) {
+          chatName = identifier;
+        }
+      }
+
+      if (!profilePicUrl) {
+        try {
+          const chat = await client.getChatById(targetChatId);
+          if (chat) {
+            profilePicUrl = await getProfilePicUrl(chat.id._serialized);
+          }
+        } catch (err) {}
+      }
+
+      if (!identifier) return;
+
+      const bodyContent = await displayMessageText(msg, client);
+      const messageDate = new Date((Number(msg.timestamp) || Date.now() / 1000) * 1000);
+      const mediaInfo =
+        (await takePendingOutgoingMedia(targetChatId)) || (await saveMessageMedia(msg));
+      const quotedInfo = await getQuotedContext(msg);
+
+      let chat = await Chat.findOne({ phoneNumber: identifier });
+      if (!chat) {
+        chat = await Chat.create({
+          phoneNumber: identifier,
+          whatsappId,
+          contactName: chatName,
+          profilePicUrl: profilePicUrl || '',
+          isGroup: isGroupChat,
+          status: 'open',
+          lastMessage: bodyContent,
+          lastMessageAt: messageDate,
         });
-    });
-
-    const pollCalls = async () => {
-        if (!isClientReady || !client?.pupPage) return;
-        try {
-            const calls = await client.pupPage.evaluate(() => {
-                const collection = window.require('WAWebCallCollection');
-                const mapKey = Object.keys(collection).find(key => collection[key] instanceof Map);
-                const callMap = mapKey ? collection[mapKey] : null;
-                return callMap ? [...callMap.values()].map(call => ({
-                    id: call.id,
-                    peerJid: call.peerJid,
-                    isVideo: call.isVideo,
-                    isGroup: call.isGroup,
-                    outgoing: call.outgoing,
-                    offerTime: call.offerTime
-                })) : [];
-            });
-            for (const call of calls) {
-                const timestamp = Number(call.offerTime || 0) * 1000;
-                if (timestamp && Date.now() - timestamp > 10 * 60 * 1000) continue;
-                await handleIncomingCall(call);
-            }
-        } catch (err) {
-            console.warn(`[WHATSAPP] Falha ao consultar chamadas: ${err.message || err}`);
+      } else {
+        chat.lastMessage = bodyContent;
+        chat.lastMessageAt = messageDate;
+        chat.isTemporary = false;
+        chat.whatsappId = whatsappId || chat.whatsappId;
+        if (chatName && chatName !== identifier) {
+          chat.contactName = chatName;
         }
-    };
-    callPollTimer = setInterval(pollCalls, 2000);
-
-    client.on('message', async (msg) => {
-        if (msg.isStatus || msg.from === 'status@broadcast' || msg.to === 'status@broadcast') return;
-
-        try {
-            if (msg.type === 'call_log' || msg._data?.type === 'call_log') {
-                await handleIncomingCall({
-                    id: getWhatsAppMessageId(msg),
-                    peerJid: msg.fromMe ? msg.to : msg.from,
-                    fromMe: Boolean(msg.fromMe),
-                    isVideo: Boolean(msg._data?.isVideoCall || msg._data?.isVideo),
-                    isGroup: Boolean(msg.from?.endsWith('@g.us') || msg.to?.endsWith('@g.us')),
-                    timestamp: msg.timestamp,
-                    outcome: msg._data?.callOutcome || msg._data?.callStatus || msg._data?.subtype,
-                    duration: msg._data?.callDuration || msg.duration,
-                    isFinal: true
-                });
-                return;
-            }
-
-            let senderName = '';
-            let identifier = '';
-            let profilePicUrl = '';
-            let whatsappId = msg.from;
-            let isGroupChat = msg.from.includes('@g.us');
-            let groupSenderId = '';
-            let groupSenderName = '';
-
-            if (isGroupChat) {
-                identifier = msg.from;
-                groupSenderId = msg.author || msg._data?.author || '';
-                try {
-                    const chat = await msg.getChat();
-                    senderName = getChatDisplayName(chat, 'Grupo sem nome');
-                    try {
-                        profilePicUrl = await getProfilePicUrl(chat.id._serialized);
-                    } catch (err) {}
-                } catch (e) {
-                    senderName = 'Grupo';
-                }
-
-                try {
-                    const participant = groupSenderId
-                        ? await client.getContactById(groupSenderId)
-                        : await msg.getContact();
-                    groupSenderName = participant?.name || participant?.verifiedName || participant?.pushname || '';
-                    groupSenderId = participant?.id?._serialized || groupSenderId;
-                } catch (err) {}
-
-                if (!groupSenderName) {
-                    groupSenderName = msg._data?.notifyName || groupSenderId.replace(/@.+$/, '') || 'Participante';
-                }
-            } else {
-                let cleanPhone = '';
-                try {
-                    const contact = await msg.getContact();
-                    if ([contact.name, contact.verifiedName, contact.pushname].some(name => String(name || '').trim().toLowerCase() === 'whatsapp business')) return;
-                    whatsappId = contact.id?._serialized || msg.from;
-                    
-                    let timerFoto;
-
-                try {
-                    console.log('[FOTO] Iniciando consulta');
-
-                    const resultado = await Promise.race([
-                        getProfilePicUrl(contact.id._serialized),
-
-                        new Promise((_, reject) => {
-                            timerFoto = setTimeout(() => {
-                                reject(new Error('Consulta não respondeu em 10 segundos'));
-                            }, 10000);
-                        })
-                    ]);
-
-                    console.log('[FOTO] Consulta concluída:', resultado);
-
-                    profilePicUrl = resultado || '';
-                } catch (erro) {
-                    console.error('[FOTO] ERRO:', erro.stack || erro);
-                } finally {
-                    clearTimeout(timerFoto);
-                }
-
-                    if (contact.id && contact.id.user && !contact.id.user.includes('@')) {
-                        cleanPhone = contact.id.user;
-                    } else if (contact.number) {
-                        cleanPhone = contact.number.replace(/\D/g, '');
-                    }
-
-                    if ((!cleanPhone || cleanPhone.length < 8) && contact.id && contact.id._serialized) {
-                        const serialized = contact.id._serialized;
-                        if (!serialized.includes('@lid')) {
-                            cleanPhone = serialized.replace(/\D/g, '');
-                        }
-                    }
-
-                    if (!cleanPhone || cleanPhone.length < 8) {
-                        const chat = await msg.getChat();
-                        if (chat && chat.id && chat.id.user && !chat.id.user.includes('@')) {
-                            cleanPhone = chat.id.user;
-                        } else {
-                            cleanPhone = msg.from.replace(/\D/g, '');
-                        }
-                    }
-
-                    senderName = contact.name || contact.verifiedName || contact.pushname || '';
-                } catch (e) {
-                    cleanPhone = msg.from.replace(/\D/g, '');
-                }
-                identifier = cleanPhone.replace(/\D/g, '');
-            }
-
-            if (!profilePicUrl) {
-                try {
-                    const chat = await msg.getChat();
-                    if (chat) {
-                        profilePicUrl = await getProfilePicUrl(chat.id._serialized);
-                    }
-                } catch (err) {}
-            }
-
-            if (!isGroupChat && senderName?.trim().toLowerCase() === 'whatsapp business') return;
-            const bodyContent = await displayMessageText(msg, client);
-            const messageDate = new Date((Number(msg.timestamp) || Date.now() / 1000) * 1000);
-            const mediaInfo = await saveMessageMedia(msg);
-            const quotedInfo = await getQuotedContext(msg);
-
-            let chat = await Chat.findOne({ phoneNumber: identifier });
-            if (!chat) {
-                chat = await Chat.create({
-                    phoneNumber: identifier,
-                    whatsappId,
-                    contactName: senderName,
-                    profilePicUrl: profilePicUrl || '',
-                    isGroup: isGroupChat,
-                    status: 'pending',
-                    lastMessage: bodyContent,
-                    lastMessageAt: messageDate
-                });
-            } else {
-                chat.lastMessage = bodyContent;
-                chat.lastMessageAt = messageDate;
-                chat.isTemporary = false;
-                chat.whatsappId = whatsappId || chat.whatsappId;
-                if (senderName) chat.contactName = senderName;
-                if (profilePicUrl) chat.profilePicUrl = profilePicUrl;
-                if (chat.status === 'closed') chat.status = 'pending';
-                chat.updatedAt = Date.now();
-                await chat.save();
-            }
-
-            const savedDbMessage = await Message.create({
-                ticketId: chat._id,
-                phoneNumber: identifier,
-                whatsappMessageId: getWhatsAppMessageId(msg),
-                sender: 'client',
-                groupSenderId,
-                groupSenderName,
-                body: bodyContent,
-                ...quotedInfo,
-                ...(mediaInfo || {})
-            });
-
-            const msgData = {
-                id: savedDbMessage._id.toString(),
-                whatsappMessageId: savedDbMessage.whatsappMessageId,
-                ticketId: chat._id.toString(),
-                from: msg.from,
-                senderName: isGroupChat ? groupSenderName : (senderName || identifier),
-                groupSenderId,
-                groupSenderName,
-                phoneNumber: identifier,
-                ...quotedInfo,
-                profilePicUrl: profilePicUrl || '',
-                body: bodyContent,
-                hasMedia: Boolean(mediaInfo),
-                mediaUrl: mediaInfo ? `/api/messages/${savedDbMessage._id}/media` : null,
-                mediaMimeType: mediaInfo?.mediaMimeType || '',
-                mediaFileName: mediaInfo?.mediaFileName || '',
-                timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-                sentAt: savedDbMessage.timestamp,
-                fromMe: false
-            };
-
-            recentMessages.set(msg.from, msg);
-            setTimeout(() => recentMessages.delete(msg.from), 10 * 60 * 1000);
-
-            if (ioInstance) {
-                ioInstance.emit('new_message', {
-                    chat,
-                    message: msgData
-                });
-            }
-        } catch (err) {
-            console.error('Erro no processamento da mensagem recebida:', err.message);
+        if (profilePicUrl) {
+          chat.profilePicUrl = profilePicUrl;
         }
-    });
+        chat.updatedAt = Date.now();
+        await chat.save();
+      }
 
-    client.on('message_create', async (msg) => {
-        if (msg.type === 'call_log' || msg._data?.type === 'call_log') return;
-        if (!msg.fromMe || msg.from === 'status@broadcast') return;
+      // Evita criar duplicado exato no DB caso a mensagem já venha de message_create idêntica recente
+      const existingMessage = await Message.findOne({
+        ticketId: chat._id,
+        body: bodyContent,
+        sender: 'agent',
+        createdAt: { $gte: new Date(Date.now() - 5000) },
+      });
 
-        try {
-            const targetChatId = msg.to || msg.id.remote;
-            const whatsappId = targetChatId;
-            const isGroupChat = targetChatId.includes('@g.us');
-            
-            let identifier = '';
-            let chatName = '';
-            let profilePicUrl = '';
+      let savedDbMessage = existingMessage;
+      const whatsappMessageId = getWhatsAppMessageId(msg);
+      const pendingAck = pendingMessageAcks.get(whatsappMessageId);
+      const currentAck = Number.isInteger(pendingAck)
+        ? pendingAck
+        : Number.isInteger(msg.ack)
+          ? msg.ack
+          : 0;
 
-            if (isGroupChat) {
-                identifier = targetChatId;
-                try {
-                    const chat = await client.getChatById(targetChatId);
-                    chatName = getChatDisplayName(chat, 'Grupo sem nome');
-                    profilePicUrl = await getProfilePicUrl(chat.id._serialized);
-                } catch (e) {
-                    chatName = 'Grupo';
-                }
-            } else {
-                let cleanId = targetChatId;
-                try {
-                    const contact = await client.getContactById(targetChatId);
-                    if (contact) {
-                        try {
-                            profilePicUrl = await getProfilePicUrl(contact.id._serialized);
-                        } catch (err) {}
-
-                        if (contact.id && contact.id.user && !contact.id.user.includes('@')) {
-                            identifier = contact.id.user;
-                        } else if (contact.number) {
-                            identifier = contact.number.replace(/\D/g, '');
-                        }
-
-                        chatName = contact.name || contact.verifiedName || contact.pushname || '';
-                    }
-                } catch (e) {}
-
-                if (!identifier || identifier.length < 8) {
-                    identifier = cleanId.replace(/\D/g, '');
-                }
-
-                if (!chatName) {
-                    chatName = identifier;
-                }
-            }
-
-            if (!profilePicUrl) {
-                try {
-                    const chat = await client.getChatById(targetChatId);
-                    if (chat) {
-                        profilePicUrl = await getProfilePicUrl(chat.id._serialized);
-                    }
-                } catch (err) {}
-            }
-
-            if (!identifier) return;
-
-            const bodyContent = await displayMessageText(msg, client);
-            const messageDate = new Date((Number(msg.timestamp) || Date.now() / 1000) * 1000);
-            const mediaInfo = await takePendingOutgoingMedia(targetChatId) || await saveMessageMedia(msg);
-            const quotedInfo = await getQuotedContext(msg);
-
-            let chat = await Chat.findOne({ phoneNumber: identifier });
-            if (!chat) {
-                chat = await Chat.create({
-                    phoneNumber: identifier,
-                    whatsappId,
-                    contactName: chatName,
-                    profilePicUrl: profilePicUrl || '',
-                    isGroup: isGroupChat,
-                    status: 'open',
-                    lastMessage: bodyContent,
-                    lastMessageAt: messageDate
-                });
-            } else {
-                chat.lastMessage = bodyContent;
-                chat.lastMessageAt = messageDate;
-                chat.isTemporary = false;
-                chat.whatsappId = whatsappId || chat.whatsappId;
-                if (chatName && chatName !== identifier) {
-                    chat.contactName = chatName;
-                }
-                if (profilePicUrl) {
-                    chat.profilePicUrl = profilePicUrl;
-                }
-                chat.updatedAt = Date.now();
-                await chat.save();
-            }
-
-            // Evita criar duplicado exato no DB caso a mensagem já venha de message_create idêntica recente
-            const existingMessage = await Message.findOne({
-                ticketId: chat._id,
-                body: bodyContent,
-                sender: 'agent',
-                createdAt: { $gte: new Date(Date.now() - 5000) }
-            });
-
-            let savedDbMessage = existingMessage;
-            const whatsappMessageId = getWhatsAppMessageId(msg);
-            const pendingAck = pendingMessageAcks.get(whatsappMessageId);
-            const currentAck = Number.isInteger(pendingAck)
-                ? pendingAck
-                : (Number.isInteger(msg.ack) ? msg.ack : 0);
-
-            if (!savedDbMessage) {
-                savedDbMessage = await Message.create({
-                    ticketId: chat._id,
-                    phoneNumber: identifier,
-                    whatsappMessageId,
-                    sender: 'agent',
-                    body: bodyContent,
-                    ack: currentAck,
-                    ...quotedInfo,
-                    ...(mediaInfo || {})
-                });
-            } else {
-                savedDbMessage.whatsappMessageId = whatsappMessageId || savedDbMessage.whatsappMessageId;
-                savedDbMessage.ack = mergeMessageAck(savedDbMessage.ack, currentAck);
-                Object.assign(savedDbMessage, quotedInfo);
-                if (mediaInfo) {
-                    savedDbMessage.hasMedia = true;
-                    savedDbMessage.mediaPath = mediaInfo.mediaPath;
-                    savedDbMessage.mediaMimeType = mediaInfo.mediaMimeType;
-                    savedDbMessage.mediaFileName = mediaInfo.mediaFileName;
-                }
-                await savedDbMessage.save();
-            }
-
-            pendingMessageAcks.delete(whatsappMessageId);
-
-            const msgData = {
-                id: savedDbMessage._id.toString(),
-                whatsappMessageId: savedDbMessage.whatsappMessageId,
-                ticketId: chat._id.toString(),
-                from: targetChatId,
-                senderName: 'Você',
-                phoneNumber: identifier,
-                ...quotedInfo,
-                profilePicUrl: profilePicUrl || '',
-                body: bodyContent,
-                ack: savedDbMessage.ack,
-                hasMedia: savedDbMessage.hasMedia,
-                mediaUrl: savedDbMessage.hasMedia ? `/api/messages/${savedDbMessage._id}/media` : null,
-                mediaMimeType: savedDbMessage.mediaMimeType || '',
-                mediaFileName: savedDbMessage.mediaFileName || '',
-                timestamp: new Date(savedDbMessage.createdAt || Date.now()).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-                sentAt: savedDbMessage.timestamp,
-                fromMe: true
-            };
-
-            if (ioInstance) {
-                ioInstance.emit('new_message', {
-                    chat,
-                    message: msgData
-                });
-            }
-        } catch (err) {
-            console.error('Erro no processamento da mensagem enviada (message_create):', err.message);
+      if (!savedDbMessage) {
+        savedDbMessage = await Message.create({
+          ticketId: chat._id,
+          phoneNumber: identifier,
+          whatsappMessageId,
+          sender: 'agent',
+          body: bodyContent,
+          ack: currentAck,
+          ...quotedInfo,
+          ...(mediaInfo || {}),
+        });
+      } else {
+        savedDbMessage.whatsappMessageId = whatsappMessageId || savedDbMessage.whatsappMessageId;
+        savedDbMessage.ack = mergeMessageAck(savedDbMessage.ack, currentAck);
+        Object.assign(savedDbMessage, quotedInfo);
+        if (mediaInfo) {
+          savedDbMessage.hasMedia = true;
+          savedDbMessage.mediaPath = mediaInfo.mediaPath;
+          savedDbMessage.mediaMimeType = mediaInfo.mediaMimeType;
+          savedDbMessage.mediaFileName = mediaInfo.mediaFileName;
         }
-    });
+        await savedDbMessage.save();
+      }
 
-    client.on('message_ack', async (msg, ack) => {
-        if (!msg.fromMe) return;
+      pendingMessageAcks.delete(whatsappMessageId);
 
-        try {
-            const whatsappMessageId = getWhatsAppMessageId(msg);
-            if (!whatsappMessageId) return;
+      const msgData = {
+        id: savedDbMessage._id.toString(),
+        whatsappMessageId: savedDbMessage.whatsappMessageId,
+        ticketId: chat._id.toString(),
+        from: targetChatId,
+        senderName: 'Você',
+        phoneNumber: identifier,
+        ...quotedInfo,
+        profilePicUrl: profilePicUrl || '',
+        body: bodyContent,
+        ack: savedDbMessage.ack,
+        hasMedia: savedDbMessage.hasMedia,
+        mediaUrl: savedDbMessage.hasMedia ? `/api/messages/${savedDbMessage._id}/media` : null,
+        mediaMimeType: savedDbMessage.mediaMimeType || '',
+        mediaFileName: savedDbMessage.mediaFileName || '',
+        timestamp: new Date(savedDbMessage.createdAt || Date.now()).toLocaleTimeString('pt-BR', {
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+        sentAt: savedDbMessage.timestamp,
+        fromMe: true,
+      };
 
-            const previousAck = pendingMessageAcks.get(whatsappMessageId);
-            pendingMessageAcks.set(whatsappMessageId, mergeMessageAck(previousAck, ack));
-            setTimeout(() => pendingMessageAcks.delete(whatsappMessageId), 10 * 60 * 1000);
+      if (ioInstance) {
+        ioInstance.emit('new_message', {
+          chat,
+          message: msgData,
+        });
+      }
+    } catch (err) {
+      console.error('Erro no processamento da mensagem enviada (message_create):', err.message);
+    }
+  });
 
-            const savedMessage = await Message.findOne({ whatsappMessageId });
-            if (savedMessage) {
-                savedMessage.ack = mergeMessageAck(savedMessage.ack, ack);
-                await savedMessage.save();
-            }
+  client.on('message_ack', async (msg, ack) => {
+    if (!msg.fromMe) return;
 
-            if (savedMessage && ioInstance) {
-                pendingMessageAcks.delete(whatsappMessageId);
-                console.log(`[ACK] Mensagem ${savedMessage._id}: ${ack}`);
-                ioInstance.emit('message_ack', {
-                    messageId: savedMessage._id.toString(),
-                    ticketId: savedMessage.ticketId.toString(),
-                    ack: savedMessage.ack
-                });
-            } else {
-                console.log(`[ACK] Confirmacao ${ack} aguardando gravacao da mensagem`);
-            }
-        } catch (err) {
-            console.error('Erro ao atualizar confirmacao da mensagem:', err.message);
-        }
-    });
+    try {
+      const whatsappMessageId = getWhatsAppMessageId(msg);
+      if (!whatsappMessageId) return;
 
-    client.on('message_edit', async (msg, newBody) => {
-        try {
-            const whatsappMessageId = getWhatsAppMessageId(msg);
-            if (!whatsappMessageId) return;
+      const previousAck = pendingMessageAcks.get(whatsappMessageId);
+      pendingMessageAcks.set(whatsappMessageId, mergeMessageAck(previousAck, ack));
+      setTimeout(() => pendingMessageAcks.delete(whatsappMessageId), 10 * 60 * 1000);
 
-            const savedMessage = await Message.findOne({ whatsappMessageId });
-            if (!savedMessage) return;
+      const savedMessage = await Message.findOne({ whatsappMessageId });
+      if (savedMessage) {
+        savedMessage.ack = mergeMessageAck(savedMessage.ack, ack);
+        await savedMessage.save();
+      }
 
-            savedMessage.body = String(newBody ?? msg.body ?? '').trim();
-            savedMessage.editedAt = new Date();
-            await savedMessage.save();
+      if (savedMessage && ioInstance) {
+        pendingMessageAcks.delete(whatsappMessageId);
+        console.log(`[ACK] Mensagem ${savedMessage._id}: ${ack}`);
+        ioInstance.emit('message_ack', {
+          messageId: savedMessage._id.toString(),
+          ticketId: savedMessage.ticketId.toString(),
+          ack: savedMessage.ack,
+        });
+      } else {
+        console.log(`[ACK] Confirmacao ${ack} aguardando gravacao da mensagem`);
+      }
+    } catch (err) {
+      console.error('Erro ao atualizar confirmacao da mensagem:', err.message);
+    }
+  });
 
-            if (ioInstance) {
-                ioInstance.emit('message_edit', {
-                    messageId: savedMessage._id.toString(),
-                    ticketId: savedMessage.ticketId.toString(),
-                    body: savedMessage.body,
-                    editedAt: savedMessage.editedAt
-                });
-            }
-        } catch (err) {
-            console.error('Erro ao sincronizar edicao da mensagem:', err.message);
-        }
-    });
+  client.on('message_edit', async (msg, newBody) => {
+    try {
+      const whatsappMessageId = getWhatsAppMessageId(msg);
+      if (!whatsappMessageId) return;
 
-    client.on('message_revoke_everyone', async (msg, revokedMsg) => {
-        try {
-            const whatsappMessageId = getWhatsAppMessageId(revokedMsg)
-                || getWhatsAppMessageId({ id: msg?.protocolMessageKey });
-            if (!whatsappMessageId) return;
+      const savedMessage = await Message.findOne({ whatsappMessageId });
+      if (!savedMessage) return;
 
-            const savedMessage = await Message.findOne({ whatsappMessageId });
-            if (!savedMessage) return;
+      savedMessage.body = String(newBody ?? msg.body ?? '').trim();
+      savedMessage.editedAt = new Date();
+      await savedMessage.save();
 
-            savedMessage.deletedAt = new Date();
-            await savedMessage.save();
+      if (ioInstance) {
+        ioInstance.emit('message_edit', {
+          messageId: savedMessage._id.toString(),
+          ticketId: savedMessage.ticketId.toString(),
+          body: savedMessage.body,
+          editedAt: savedMessage.editedAt,
+        });
+      }
+    } catch (err) {
+      console.error('Erro ao sincronizar edicao da mensagem:', err.message);
+    }
+  });
 
-            if (ioInstance) {
-                ioInstance.emit('message_revoke', {
-                    messageId: savedMessage._id.toString(),
-                    ticketId: savedMessage.ticketId.toString(),
-                    deletedAt: savedMessage.deletedAt
-                });
-            }
-        } catch (err) {
-            console.error('Erro ao sincronizar exclusao da mensagem:', err.message);
-        }
-    });
+  client.on('message_revoke_everyone', async (msg, revokedMsg) => {
+    try {
+      const whatsappMessageId =
+        getWhatsAppMessageId(revokedMsg) || getWhatsAppMessageId({ id: msg?.protocolMessageKey });
+      if (!whatsappMessageId) return;
 
-    client.on('remote_session_saved', () => {
-        console.log('📌 Sessão remota vinculada e salva.');
-    });
+      const savedMessage = await Message.findOne({ whatsappMessageId });
+      if (!savedMessage) return;
 
-    client.on('change_state', state => {
-        console.log('🔄 Estado do cliente mudou para:', state);
-    });
+      savedMessage.deletedAt = new Date();
+      await savedMessage.save();
 
-    client.on('disconnected', async (reason) => {
-        isClientReady = false;
-        currentQrCode = null;
-        console.warn(`⚠️ Cliente desconectado. Motivo: ${reason}`);
+      if (ioInstance) {
+        ioInstance.emit('message_revoke', {
+          messageId: savedMessage._id.toString(),
+          ticketId: savedMessage.ticketId.toString(),
+          deletedAt: savedMessage.deletedAt,
+        });
+      }
+    } catch (err) {
+      console.error('Erro ao sincronizar exclusao da mensagem:', err.message);
+    }
+  });
 
-        try {
-            await client.destroy();
-        } catch (err) {
-            console.error('Erro ao destruir client:', err);
-        }
+  client.on('remote_session_saved', () => {
+    console.log('📌 Sessão remota vinculada e salva.');
+  });
 
-        setTimeout(() => initWhatsApp(ioInstance), 5000);
-    });
+  client.on('change_state', (state) => {
+    console.log('🔄 Estado do cliente mudou para:', state);
+  });
 
-    client.initialize().catch(err => console.error('❌ Falha ao inicializar o client:', err));
+  client.on('disconnected', async (reason) => {
+    isClientReady = false;
+    currentQrCode = null;
+    console.warn(`⚠️ Cliente desconectado. Motivo: ${reason}`);
+
+    try {
+      await client.destroy();
+    } catch (err) {
+      console.error('Erro ao destruir client:', err);
+    }
+
+    setTimeout(() => initWhatsApp(ioInstance), 5000);
+  });
+
+  client.initialize().catch((err) => console.error('❌ Falha ao inicializar o client:', err));
 }
 
-async function sendMessage({ number, message, file, fileUrl, fileBase64, mimeType, fileName, agentId, replyToMessageId, sendAudioAsVoice, isClosingMessage }) {
-    if (!isClientReady || !client) {
-        throw new Error('O serviço de WhatsApp não está pronto. Tente novamente em alguns instantes.');
-    }
+async function sendMessage({
+  number,
+  message,
+  file,
+  fileUrl,
+  fileBase64,
+  mimeType,
+  fileName,
+  agentId,
+  replyToMessageId,
+  sendAudioAsVoice,
+  isClosingMessage,
+}) {
+  if (!isClientReady || !client) {
+    throw new Error('O serviço de WhatsApp não está pronto. Tente novamente em alguns instantes.');
+  }
 
-    let messageToSend = message || '';
-    if (agentId) {
-        const agent = await Agent.findOne({ _id: agentId, active: true });
-        if (!agent) throw new Error('Agente nao encontrado ou inativo.');
-        if (sendAudioAsVoice !== true && isClosingMessage !== true) messageToSend = `${agent.name}: ${messageToSend}`;
-    }
+  let messageToSend = message || '';
+  if (agentId) {
+    const agent = await Agent.findOne({ _id: agentId, active: true });
+    if (!agent) throw new Error('Agente nao encontrado ou inativo.');
+    if (sendAudioAsVoice !== true && isClosingMessage !== true)
+      messageToSend = `${agent.name}: ${messageToSend}`;
+  }
 
-    const cleanId = number.replace(/\D/g, '');
-    let targetJid;
+  const cleanId = number.replace(/\D/g, '');
+  let targetJid;
 
-    if (number.includes('@g.us')) {
-        targetJid = number;
+  if (number.includes('@g.us')) {
+    targetJid = number;
+  } else {
+    const resolvedId = await client.getNumberId(cleanId);
+    if (resolvedId && resolvedId._serialized) {
+      targetJid = resolvedId._serialized;
     } else {
-        const resolvedId = await client.getNumberId(cleanId);
-        if (resolvedId && resolvedId._serialized) {
-            targetJid = resolvedId._serialized;
-        } else {
-            targetJid = `${cleanId}@c.us`;
-        }
+      targetJid = `${cleanId}@c.us`;
+    }
+  }
+
+  return addToQueue(async () => {
+    let options = {};
+    if (replyToMessageId) {
+      const quotedMessage = await Message.findById(replyToMessageId);
+      if (quotedMessage?.whatsappMessageId)
+        options.quotedMessageId = quotedMessage.whatsappMessageId;
+    }
+    let payloadToSend = messageToSend;
+
+    if (file) {
+      payloadToSend = new MessageMedia(
+        file.mimetype,
+        file.buffer.toString('base64'),
+        file.originalname,
+      );
+      if (messageToSend) options.caption = messageToSend;
+    } else if (fileUrl) {
+      payloadToSend = await MessageMedia.fromUrl(fileUrl, { unsafeMime: true });
+      if (messageToSend) options.caption = messageToSend;
+    } else if (fileBase64) {
+      payloadToSend = new MessageMedia(
+        mimeType || 'application/octet-stream',
+        fileBase64,
+        fileName || 'arquivo',
+      );
+      if (messageToSend) options.caption = messageToSend;
     }
 
-    return addToQueue(async () => {
-        let options = {};
-        if (replyToMessageId) {
-            const quotedMessage = await Message.findById(replyToMessageId);
-            if (quotedMessage?.whatsappMessageId) options.quotedMessageId = quotedMessage.whatsappMessageId;
-        }
-        let payloadToSend = messageToSend;
+    if (sendAudioAsVoice === true) {
+      if (
+        !(payloadToSend instanceof MessageMedia) ||
+        !payloadToSend.mimetype.startsWith('audio/')
+      ) {
+        throw new Error('Forneça um arquivo de áudio para enviar como mensagem de voz.');
+      }
+      const voiceData = await convertVoiceAudio(payloadToSend.data);
+      payloadToSend = new MessageMedia('audio/ogg; codecs=opus', voiceData, 'audio.ogg');
+      options.sendAudioAsVoice = true;
+      delete options.caption;
+    }
 
-        if (file) {
-            payloadToSend = new MessageMedia(file.mimetype, file.buffer.toString('base64'), file.originalname);
-            if (messageToSend) options.caption = messageToSend;
-        } else if (fileUrl) {
-            payloadToSend = await MessageMedia.fromUrl(fileUrl, { unsafeMime: true });
-            if (messageToSend) options.caption = messageToSend;
-        } else if (fileBase64) {
-            payloadToSend = new MessageMedia(mimeType || 'application/octet-stream', fileBase64, fileName || 'arquivo');
-            if (messageToSend) options.caption = messageToSend;
-        }
+    let pendingMedia = null;
+    if (payloadToSend instanceof MessageMedia) {
+      pendingMedia = {
+        targetJid,
+        createdAt: Date.now(),
+        media: {
+          data: payloadToSend.data,
+          mimetype: payloadToSend.mimetype,
+          filename: payloadToSend.filename,
+        },
+      };
+      pendingOutgoingMedia.push(pendingMedia);
+      setTimeout(() => {
+        const index = pendingOutgoingMedia.indexOf(pendingMedia);
+        if (index >= 0) pendingOutgoingMedia.splice(index, 1);
+      }, 60000);
+    }
 
-        if (sendAudioAsVoice === true) {
-            if (!(payloadToSend instanceof MessageMedia) || !payloadToSend.mimetype.startsWith('audio/')) {
-                throw new Error('Forneça um arquivo de áudio para enviar como mensagem de voz.');
-            }
-            const voiceData = await convertVoiceAudio(payloadToSend.data);
-            payloadToSend = new MessageMedia('audio/ogg; codecs=opus', voiceData, 'audio.ogg');
-            options.sendAudioAsVoice = true;
-            delete options.caption;
-        }
+    // Apenas envia a mensagem pelo WhatsApp.
+    // O evento 'message_create' vai capturar o envio e cuidar do banco de dados e do Socket.io sem duplicar.
+    try {
+      if (payloadToSend instanceof MessageMedia && payloadToSend.mimetype.startsWith('audio/')) {
+        await sendAudio(client, targetJid, payloadToSend, options);
+      } else {
+        await client.sendMessage(targetJid, payloadToSend, options);
+      }
+    } catch (err) {
+      const index = pendingOutgoingMedia.indexOf(pendingMedia);
+      if (index >= 0) pendingOutgoingMedia.splice(index, 1);
+      throw err;
+    }
 
-        let pendingMedia = null;
-        if (payloadToSend instanceof MessageMedia) {
-            pendingMedia = {
-                targetJid,
-                createdAt: Date.now(),
-                media: {
-                    data: payloadToSend.data,
-                    mimetype: payloadToSend.mimetype,
-                    filename: payloadToSend.filename
-                }
-            };
-            pendingOutgoingMedia.push(pendingMedia);
-            setTimeout(() => {
-                const index = pendingOutgoingMedia.indexOf(pendingMedia);
-                if (index >= 0) pendingOutgoingMedia.splice(index, 1);
-            }, 60000);
-        }
+    const textContent =
+      file || fileUrl || fileBase64 ? `[Arquivo] ${messageToSend}` : messageToSend;
 
-        // Apenas envia a mensagem pelo WhatsApp. 
-        // O evento 'message_create' vai capturar o envio e cuidar do banco de dados e do Socket.io sem duplicar.
-        try {
-            if (payloadToSend instanceof MessageMedia && payloadToSend.mimetype.startsWith('audio/')) {
-                await sendAudio(client, targetJid, payloadToSend, options);
-            } else {
-                await client.sendMessage(targetJid, payloadToSend, options);
-            }
-        } catch (err) {
-            const index = pendingOutgoingMedia.indexOf(pendingMedia);
-            if (index >= 0) pendingOutgoingMedia.splice(index, 1);
-            throw err;
-        }
-
-        const textContent = (file || fileUrl || fileBase64) ? `[Arquivo] ${messageToSend}` : messageToSend;
-
-        return {
-            phoneNumber: cleanId,
-            body: textContent,
-            fromMe: true
-        };
-    });
+    return {
+      phoneNumber: cleanId,
+      body: textContent,
+      fromMe: true,
+    };
+  });
 }
 
 async function editMessage(messageId, content) {
-    if (!isClientReady || !client) {
-        throw new Error('O servico de WhatsApp nao esta pronto. Tente novamente em alguns instantes.');
-    }
+  if (!isClientReady || !client) {
+    throw new Error('O servico de WhatsApp nao esta pronto. Tente novamente em alguns instantes.');
+  }
 
-    const body = String(content || '').trim();
-    if (!body) throw new Error('A mensagem editada nao pode ficar vazia.');
-    if (body.length > 4096) throw new Error('A mensagem editada e muito longa.');
+  const body = String(content || '').trim();
+  if (!body) throw new Error('A mensagem editada nao pode ficar vazia.');
+  if (body.length > 4096) throw new Error('A mensagem editada e muito longa.');
 
-    const savedMessage = await Message.findById(messageId);
-    if (!savedMessage) throw new Error('Mensagem nao encontrada.');
-    if (savedMessage.sender !== 'agent' || savedMessage.isInternalEvent) {
-        throw new Error('Somente mensagens enviadas pelo atendimento podem ser editadas.');
-    }
-    if (!isWithinMessageWindow(savedMessage, MESSAGE_EDIT_WINDOW_MS)) {
-        throw new Error('O prazo de 15 minutos para editar esta mensagem expirou.');
-    }
-    if (!savedMessage.whatsappMessageId) {
-        throw new Error('Esta mensagem nao possui um identificador do WhatsApp e nao pode ser editada.');
-    }
-
-    const whatsappMessage = await client.getMessageById(savedMessage.whatsappMessageId);
-    if (!whatsappMessage) throw new Error('A mensagem nao foi encontrada no WhatsApp.');
-
-    let editedMessage = await whatsappMessage.edit(body);
-
-    // whatsapp-web.js currently reports @lid messages as non-editable even when
-    // WhatsApp still accepts the edit. Retry only for that known identifier type,
-    // bypassing the broken client-side capability check while keeping the server
-    // as the final authority.
-    const remoteId = String(
-        whatsappMessage.id?.remote?._serialized
-        || whatsappMessage.id?.remote?.$1
-        || whatsappMessage.id?.remote
-        || whatsappMessage.to
-        || ''
+  const savedMessage = await Message.findById(messageId);
+  if (!savedMessage) throw new Error('Mensagem nao encontrada.');
+  if (savedMessage.sender !== 'agent' || savedMessage.isInternalEvent) {
+    throw new Error('Somente mensagens enviadas pelo atendimento podem ser editadas.');
+  }
+  if (!isWithinMessageWindow(savedMessage, MESSAGE_EDIT_WINDOW_MS)) {
+    throw new Error('O prazo de 15 minutos para editar esta mensagem expirou.');
+  }
+  if (!savedMessage.whatsappMessageId) {
+    throw new Error(
+      'Esta mensagem nao possui um identificador do WhatsApp e nao pode ser editada.',
     );
-    if (!editedMessage && remoteId.endsWith('@lid')) {
-        editedMessage = await client.pupPage.evaluate(async ({ whatsappMessageId, body }) => {
-            const collection = window.require('WAWebCollections').Msg;
-            const message = collection.get(whatsappMessageId)
-                || (await collection.getMessagesById([whatsappMessageId]))?.messages?.[0];
-            if (!message?.id?.fromMe) return null;
+  }
 
-            const result = await window.WWebJS.editMessage(message, body, {});
-            return result?.serialize?.() || null;
-        }, { whatsappMessageId: savedMessage.whatsappMessageId, body });
-    }
+  const whatsappMessage = await client.getMessageById(savedMessage.whatsappMessageId);
+  if (!whatsappMessage) throw new Error('A mensagem nao foi encontrada no WhatsApp.');
 
-    if (!editedMessage) {
-        throw new Error('O WhatsApp nao permite mais editar esta mensagem. A janela de edicao pode ter expirado.');
-    }
+  let editedMessage = await whatsappMessage.edit(body);
 
-    savedMessage.body = body;
-    savedMessage.editedAt = new Date();
-    await savedMessage.save();
+  // whatsapp-web.js currently reports @lid messages as non-editable even when
+  // WhatsApp still accepts the edit. Retry only for that known identifier type,
+  // bypassing the broken client-side capability check while keeping the server
+  // as the final authority.
+  const remoteId = String(
+    whatsappMessage.id?.remote?._serialized ||
+      whatsappMessage.id?.remote?.$1 ||
+      whatsappMessage.id?.remote ||
+      whatsappMessage.to ||
+      '',
+  );
+  if (!editedMessage && remoteId.endsWith('@lid')) {
+    editedMessage = await client.pupPage.evaluate(
+      async ({ whatsappMessageId, body }) => {
+        const collection = window.require('WAWebCollections').Msg;
+        const message =
+          collection.get(whatsappMessageId) ||
+          (await collection.getMessagesById([whatsappMessageId]))?.messages?.[0];
+        if (!message?.id?.fromMe) return null;
 
-    const data = {
-        messageId: savedMessage._id.toString(),
-        ticketId: savedMessage.ticketId.toString(),
-        body: savedMessage.body,
-        editedAt: savedMessage.editedAt
-    };
-    if (ioInstance) ioInstance.emit('message_edit', data);
-    return data;
+        const result = await window.WWebJS.editMessage(message, body, {});
+        return result?.serialize?.() || null;
+      },
+      { whatsappMessageId: savedMessage.whatsappMessageId, body },
+    );
+  }
+
+  if (!editedMessage) {
+    throw new Error(
+      'O WhatsApp nao permite mais editar esta mensagem. A janela de edicao pode ter expirado.',
+    );
+  }
+
+  savedMessage.body = body;
+  savedMessage.editedAt = new Date();
+  await savedMessage.save();
+
+  const data = {
+    messageId: savedMessage._id.toString(),
+    ticketId: savedMessage.ticketId.toString(),
+    body: savedMessage.body,
+    editedAt: savedMessage.editedAt,
+  };
+  if (ioInstance) ioInstance.emit('message_edit', data);
+  return data;
 }
 
 async function revokeMessage(messageId) {
-    if (!isClientReady || !client) {
-        throw new Error('O servico de WhatsApp nao esta pronto. Tente novamente em alguns instantes.');
-    }
+  if (!isClientReady || !client) {
+    throw new Error('O servico de WhatsApp nao esta pronto. Tente novamente em alguns instantes.');
+  }
 
-    const savedMessage = await Message.findById(messageId);
-    if (!savedMessage) throw new Error('Mensagem nao encontrada.');
-    if (savedMessage.sender !== 'agent' || savedMessage.isInternalEvent) {
-        throw new Error('Somente mensagens enviadas pelo atendimento podem ser apagadas.');
-    }
-    if (!isWithinMessageWindow(savedMessage, MESSAGE_REVOKE_WINDOW_MS)) {
-        throw new Error('O prazo de 2 dias e 12 horas para apagar esta mensagem para todos expirou.');
-    }
-    if (savedMessage.deletedAt) throw new Error('Esta mensagem ja foi apagada.');
-    if (!savedMessage.whatsappMessageId) {
-        throw new Error('Esta mensagem nao possui um identificador do WhatsApp e nao pode ser apagada.');
-    }
+  const savedMessage = await Message.findById(messageId);
+  if (!savedMessage) throw new Error('Mensagem nao encontrada.');
+  if (savedMessage.sender !== 'agent' || savedMessage.isInternalEvent) {
+    throw new Error('Somente mensagens enviadas pelo atendimento podem ser apagadas.');
+  }
+  if (!isWithinMessageWindow(savedMessage, MESSAGE_REVOKE_WINDOW_MS)) {
+    throw new Error('O prazo de 2 dias e 12 horas para apagar esta mensagem para todos expirou.');
+  }
+  if (savedMessage.deletedAt) throw new Error('Esta mensagem ja foi apagada.');
+  if (!savedMessage.whatsappMessageId) {
+    throw new Error(
+      'Esta mensagem nao possui um identificador do WhatsApp e nao pode ser apagada.',
+    );
+  }
 
-    const whatsappMessage = await client.getMessageById(savedMessage.whatsappMessageId);
-    if (!whatsappMessage?.fromMe) throw new Error('A mensagem nao foi encontrada como enviada por esta conta.');
+  const whatsappMessage = await client.getMessageById(savedMessage.whatsappMessageId);
+  if (!whatsappMessage?.fromMe)
+    throw new Error('A mensagem nao foi encontrada como enviada por esta conta.');
 
-    const canRevoke = await client.pupPage.evaluate(async whatsappMessageId => {
-        const collection = window.require('WAWebCollections').Msg;
-        const message = collection.get(whatsappMessageId)
-            || (await collection.getMessagesById([whatsappMessageId]))?.messages?.[0];
-        if (!message?.id?.fromMe) return false;
-        const capability = window.require('WAWebMsgActionCapability');
-        return Boolean(capability.canSenderRevokeMsg(message) || capability.canAdminRevokeMsg(message));
-    }, savedMessage.whatsappMessageId);
+  const canRevoke = await client.pupPage.evaluate(async (whatsappMessageId) => {
+    const collection = window.require('WAWebCollections').Msg;
+    const message =
+      collection.get(whatsappMessageId) ||
+      (await collection.getMessagesById([whatsappMessageId]))?.messages?.[0];
+    if (!message?.id?.fromMe) return false;
+    const capability = window.require('WAWebMsgActionCapability');
+    return Boolean(capability.canSenderRevokeMsg(message) || capability.canAdminRevokeMsg(message));
+  }, savedMessage.whatsappMessageId);
 
-    if (!canRevoke) {
-        throw new Error('O WhatsApp nao permite mais apagar esta mensagem para todos.');
-    }
+  if (!canRevoke) {
+    throw new Error('O WhatsApp nao permite mais apagar esta mensagem para todos.');
+  }
 
-    await whatsappMessage.delete(true, false);
-    savedMessage.deletedAt = new Date();
-    await savedMessage.save();
+  await whatsappMessage.delete(true, false);
+  savedMessage.deletedAt = new Date();
+  await savedMessage.save();
 
-    const data = {
-        messageId: savedMessage._id.toString(),
-        ticketId: savedMessage.ticketId.toString(),
-        deletedAt: savedMessage.deletedAt
-    };
-    if (ioInstance) ioInstance.emit('message_revoke', data);
-    return data;
+  const data = {
+    messageId: savedMessage._id.toString(),
+    ticketId: savedMessage.ticketId.toString(),
+    deletedAt: savedMessage.deletedAt,
+  };
+  if (ioInstance) ioInstance.emit('message_revoke', data);
+  return data;
 }
 
 async function getAllChats() {
-    if (!isClientReady || !client) {
-        throw new Error('O serviço de WhatsApp não está pronto.');
-    }
+  if (!isClientReady || !client) {
+    throw new Error('O serviço de WhatsApp não está pronto.');
+  }
 
-    const chats = await client.getChats();
-    
-    return chats.map(chat => ({
-        id: chat.id._serialized,
-        name: chat.name || chat.formattedTitle || 'Desconhecido',
-        isGroup: chat.isGroup,
-        unreadCount: chat.unreadCount,
-        lastMessage: chat.lastMessage ? chat.lastMessage.body : null
-    }));
+  const chats = await client.getChats();
+
+  return chats.map((chat) => ({
+    id: chat.id._serialized,
+    name: chat.name || chat.formattedTitle || 'Desconhecido',
+    isGroup: chat.isGroup,
+    unreadCount: chat.unreadCount,
+    lastMessage: chat.lastMessage ? chat.lastMessage.body : null,
+  }));
 }
 
 async function getContactPresence(contactId, phoneNumber = '') {
-    if (!isClientReady || !client || !contactId) return { isOnline: false };
+  if (!isClientReady || !client || !contactId) return { isOnline: false };
 
-    const cleanPhone = String(phoneNumber || contactId).replace(/\D/g, '');
-    const ids = [
-        String(contactId),
-        cleanPhone ? `${cleanPhone}@c.us` : ''
-    ].filter(Boolean);
-    try {
-        const resolvedId = cleanPhone ? await client.getNumberId(cleanPhone) : null;
-        if (resolvedId?._serialized) ids.unshift(resolvedId._serialized);
-    } catch (err) {}
+  const cleanPhone = String(phoneNumber || contactId).replace(/\D/g, '');
+  const ids = [String(contactId), cleanPhone ? `${cleanPhone}@c.us` : ''].filter(Boolean);
+  try {
+    const resolvedId = cleanPhone ? await client.getNumberId(cleanPhone) : null;
+    if (resolvedId?._serialized) ids.unshift(resolvedId._serialized);
+  } catch (err) {}
 
-    try {
-        const isOnline = await client.pupPage.evaluate(async candidateIds => {
-            const widFactory = window.require('WAWebWidFactory');
-            const collections = window.require('WAWebCollections');
-            const presenceAction = window.require('WAWebPresenceChatAction');
-            const candidates = [];
+  try {
+    const isOnline = await client.pupPage.evaluate(async (candidateIds) => {
+      const widFactory = window.require('WAWebWidFactory');
+      const collections = window.require('WAWebCollections');
+      const presenceAction = window.require('WAWebPresenceChatAction');
+      const candidates = [];
 
-            for (const id of [...new Set(candidateIds)]) {
-                try {
-                    const wid = widFactory.createWid(id);
-                    candidates.push(wid);
-                    try {
-                        const alternate = window.require('WAWebApiContact').getAlternateUserWid(wid);
-                        if (alternate) candidates.push(alternate);
-                    } catch {}
-                } catch {}
-            }
+      for (const id of [...new Set(candidateIds)]) {
+        try {
+          const wid = widFactory.createWid(id);
+          candidates.push(wid);
+          try {
+            const alternate = window.require('WAWebApiContact').getAlternateUserWid(wid);
+            if (alternate) candidates.push(alternate);
+          } catch {}
+        } catch {}
+      }
 
-            for (const wid of candidates) {
-                try { await presenceAction.subscribePresence?.(wid); } catch {}
-            }
-            await new Promise(resolve => setTimeout(resolve, 1500));
+      for (const wid of candidates) {
+        try {
+          await presenceAction.subscribePresence?.(wid);
+        } catch {}
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
 
-            return candidates.some(wid => {
-                const serialized = wid?._serialized || String(wid);
-                const chat = collections.Chat.get(wid) || collections.Chat.get(serialized);
-                let storedPresence = null;
-                try { storedPresence = collections.Presence?.get?.(wid) || collections.Presence?.get?.(serialized); } catch {}
-                const presence = chat?.presence || storedPresence;
-                const chatState = presence?.chatstates?.get?.(wid)
-                    || presence?.chatstates?.get?.(serialized)
-                    || presence?.chatstate;
-                const state = chatState?.type || chatState?._state || chatState?.state;
-                return presence?.isOnline === true || state === 'available' || state === 'online';
-            });
-        }, ids);
+      return candidates.some((wid) => {
+        const serialized = wid?._serialized || String(wid);
+        const chat = collections.Chat.get(wid) || collections.Chat.get(serialized);
+        let storedPresence = null;
+        try {
+          storedPresence =
+            collections.Presence?.get?.(wid) || collections.Presence?.get?.(serialized);
+        } catch {}
+        const presence = chat?.presence || storedPresence;
+        const chatState =
+          presence?.chatstates?.get?.(wid) ||
+          presence?.chatstates?.get?.(serialized) ||
+          presence?.chatstate;
+        const state = chatState?.type || chatState?._state || chatState?.state;
+        return presence?.isOnline === true || state === 'available' || state === 'online';
+      });
+    }, ids);
 
-        return { isOnline: isOnline === true };
-    } catch {
-        return { isOnline: false };
-    }
+    return { isOnline: isOnline === true };
+  } catch {
+    return { isOnline: false };
+  }
 }
 
 async function getContactMetadata(number) {
-    if (!isClientReady || !client) {
-        throw new Error('O servico de WhatsApp nao esta pronto.');
-    }
+  if (!isClientReady || !client) {
+    throw new Error('O servico de WhatsApp nao esta pronto.');
+  }
 
-    const cleanNumber = String(number || '').replace(/\D/g, '');
-    const resolvedId = await client.getNumberId(cleanNumber);
-    if (!resolvedId?._serialized) {
-        throw new Error('Este numero nao foi encontrado no WhatsApp.');
-    }
+  const cleanNumber = String(number || '').replace(/\D/g, '');
+  const resolvedId = await client.getNumberId(cleanNumber);
+  if (!resolvedId?._serialized) {
+    throw new Error('Este numero nao foi encontrado no WhatsApp.');
+  }
 
-    const whatsappId = resolvedId._serialized;
-    let contact = null;
-    let chat = null;
-    try { contact = await client.getContactById(whatsappId); } catch (err) {}
-    try { chat = await client.getChatById(whatsappId); } catch (err) {}
-    let loadedName = '';
-    try {
-        loadedName = await client.pupPage.evaluate(async ({ ids, fallbackNumber }) => {
-            for (const id of ids) {
-                try {
-                    const wid = window.require('WAWebWidFactory').createWid(id);
-                    const collections = window.require('WAWebCollections');
-                    let internalChat = collections.Chat.get(wid) || collections.Chat.get(id);
-                    if (!internalChat) {
-                        internalChat = await window.require('WAWebFindChatAction').findOrCreateLatestChat(wid);
-                    }
-
-                    const internalContact = internalChat?.contact || await collections.Contact.find(wid);
-                    const getters = window.require('WAWebContactGetters');
-                    const candidates = [
-                        getters.getName(internalContact),
-                        getters.getVerifiedName(internalContact),
-                        getters.getPushname(internalContact),
-                        internalChat?.formattedTitle,
-                        internalChat?.name
-                    ];
-                    const name = candidates.find(value => value && String(value).trim() && String(value).replace(/\D/g, '') !== fallbackNumber);
-                    if (name) return String(name).trim();
-                } catch (err) {}
+  const whatsappId = resolvedId._serialized;
+  let contact = null;
+  let chat = null;
+  try {
+    contact = await client.getContactById(whatsappId);
+  } catch (err) {}
+  try {
+    chat = await client.getChatById(whatsappId);
+  } catch (err) {}
+  let loadedName = '';
+  try {
+    loadedName = await client.pupPage.evaluate(
+      async ({ ids, fallbackNumber }) => {
+        for (const id of ids) {
+          try {
+            const wid = window.require('WAWebWidFactory').createWid(id);
+            const collections = window.require('WAWebCollections');
+            let internalChat = collections.Chat.get(wid) || collections.Chat.get(id);
+            if (!internalChat) {
+              internalChat = await window
+                .require('WAWebFindChatAction')
+                .findOrCreateLatestChat(wid);
             }
-            return '';
-        }, { ids: [whatsappId, `${cleanNumber}@c.us`], fallbackNumber: cleanNumber });
-    } catch (err) {}
-    // O ID resolvido pode ser um LID interno do WhatsApp e nunca deve substituir
-    // o numero que o agente informou no painel.
-    const phoneNumber = cleanNumber;
-    const nameCandidates = [
-        contact?.name,
-        contact?.verifiedName,
-        contact?.pushname,
-        loadedName,
-        chat?.name,
-        chat?.formattedTitle,
-        chat?.contact?.name,
-        chat?.contact?.verifiedName,
-        chat?.contact?.pushname
-    ];
-    const resolvedNameText = nameCandidates
-        .map(value => String(value || '').trim())
-        .find(value => value && !/^[+\d\s()-]+$/.test(value));
-    const contactName = resolvedNameText || phoneNumber;
-    let profilePicUrl = '';
-    try { profilePicUrl = await getProfilePicUrl(whatsappId); } catch (err) {}
 
-    const makeSerializable = value => {
-        try { return JSON.parse(JSON.stringify(value)); } catch (err) { return null; }
-    };
-    const rawPayload = {
-        requestedNumber: cleanNumber,
-        resolvedId: makeSerializable(resolvedId),
-        contact: makeSerializable(contact?._data || contact),
-        chat: makeSerializable(chat?._data || chat),
-        loadedName
-    };
+            const internalContact = internalChat?.contact || (await collections.Contact.find(wid));
+            const getters = window.require('WAWebContactGetters');
+            const candidates = [
+              getters.getName(internalContact),
+              getters.getVerifiedName(internalContact),
+              getters.getPushname(internalContact),
+              internalChat?.formattedTitle,
+              internalChat?.name,
+            ];
+            const name = candidates.find(
+              (value) =>
+                value &&
+                String(value).trim() &&
+                String(value).replace(/\D/g, '') !== fallbackNumber,
+            );
+            if (name) return String(name).trim();
+          } catch (err) {}
+        }
+        return '';
+      },
+      { ids: [whatsappId, `${cleanNumber}@c.us`], fallbackNumber: cleanNumber },
+    );
+  } catch (err) {}
+  // O ID resolvido pode ser um LID interno do WhatsApp e nunca deve substituir
+  // o numero que o agente informou no painel.
+  const phoneNumber = cleanNumber;
+  const nameCandidates = [
+    contact?.name,
+    contact?.verifiedName,
+    contact?.pushname,
+    loadedName,
+    chat?.name,
+    chat?.formattedTitle,
+    chat?.contact?.name,
+    chat?.contact?.verifiedName,
+    chat?.contact?.pushname,
+  ];
+  const resolvedNameText = nameCandidates
+    .map((value) => String(value || '').trim())
+    .find((value) => value && !/^[+\d\s()-]+$/.test(value));
+  const contactName = resolvedNameText || phoneNumber;
+  let profilePicUrl = '';
+  try {
+    profilePicUrl = await getProfilePicUrl(whatsappId);
+  } catch (err) {}
 
-    console.dir({ event: 'NEW_CONVERSATION_WHATSAPP_PAYLOAD', payload: rawPayload }, { depth: null });
-    return { phoneNumber, whatsappId, name: contactName, contactName, profilePicUrl, rawPayload };
+  const makeSerializable = (value) => {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (err) {
+      return null;
+    }
+  };
+  const rawPayload = {
+    requestedNumber: cleanNumber,
+    resolvedId: makeSerializable(resolvedId),
+    contact: makeSerializable(contact?._data || contact),
+    chat: makeSerializable(chat?._data || chat),
+    loadedName,
+  };
+
+  console.dir({ event: 'NEW_CONVERSATION_WHATSAPP_PAYLOAD', payload: rawPayload }, { depth: null });
+  return { phoneNumber, whatsappId, name: contactName, contactName, profilePicUrl, rawPayload };
 }
 
 function destroyClient() {
-    if (callPollTimer) {
-        clearInterval(callPollTimer);
-        callPollTimer = null;
-    }
-    if (client) return client.destroy();
-    return Promise.resolve();
+  if (callPollTimer) {
+    clearInterval(callPollTimer);
+    callPollTimer = null;
+  }
+  if (client) return client.destroy();
+  return Promise.resolve();
 }
 
 function getStatus() {
-    return { isClientReady, currentQrCode };
+  return { isClientReady, currentQrCode };
 }
 
 async function recordChatEvent(chat, agent, action) {
-    const actionLabels = {
-        claimed: 'assumiu o atendimento',
-        unclaimed: 'devolveu o atendimento',
-        closed: 'encerrou o atendimento'
-    };
-    if (!chat || !agent || !actionLabels[action]) throw new Error('Evento interno invalido.');
+  const actionLabels = {
+    claimed: 'assumiu o atendimento',
+    unclaimed: 'devolveu o atendimento',
+    closed: 'encerrou o atendimento',
+  };
+  if (!chat || !agent || !actionLabels[action]) throw new Error('Evento interno invalido.');
 
-    const savedEvent = await Message.create({
-        ticketId: chat._id,
-        phoneNumber: chat.phoneNumber,
-        sender: 'agent',
-        isInternalEvent: true,
-        internalAction: action,
-        internalActorName: agent.name,
-        body: `${agent.name} ${actionLabels[action]}`,
-        timestamp: new Date()
-    });
+  const savedEvent = await Message.create({
+    ticketId: chat._id,
+    phoneNumber: chat.phoneNumber,
+    sender: 'agent',
+    isInternalEvent: true,
+    internalAction: action,
+    internalActorName: agent.name,
+    body: `${agent.name} ${actionLabels[action]}`,
+    timestamp: new Date(),
+  });
 
-    const eventData = {
-        id: savedEvent._id.toString(),
-        ticketId: chat._id.toString(),
-        chat: typeof chat.toObject === 'function' ? chat.toObject() : chat,
-        sender: 'agent',
-        body: savedEvent.body,
-        isInternalEvent: true,
-        internalAction: action,
-        internalActorName: agent.name,
-        timestamp: savedEvent.timestamp,
-        fromMe: true
-    };
+  const eventData = {
+    id: savedEvent._id.toString(),
+    ticketId: chat._id.toString(),
+    chat: typeof chat.toObject === 'function' ? chat.toObject() : chat,
+    sender: 'agent',
+    body: savedEvent.body,
+    isInternalEvent: true,
+    internalAction: action,
+    internalActorName: agent.name,
+    timestamp: savedEvent.timestamp,
+    fromMe: true,
+  };
 
-    if (ioInstance) ioInstance.emit('chat_event', eventData);
-    return eventData;
+  if (ioInstance) ioInstance.emit('chat_event', eventData);
+  return eventData;
 }
 
 async function recordGlpiTicketEvent(chat, agent, glpiTicketId, glpiTicketUrl) {
-    if (!chat || !agent || !glpiTicketId) throw new Error('Dados do chamado GLPI inválidos.');
-    const body = `${agent.name} abriu um chamado ${glpiTicketId}`;
-    const savedEvent = await Message.create({
-        ticketId: chat._id,
-        phoneNumber: chat.phoneNumber,
-        sender: 'agent',
-        isInternalEvent: true,
-        internalAction: 'glpi_created',
-        internalActorName: agent.name,
-        glpiTicketId: String(glpiTicketId),
-        glpiTicketUrl,
-        body,
-        timestamp: new Date()
-    });
-    const eventData = {
-        id: savedEvent._id.toString(),
-        ticketId: chat._id.toString(),
-        chat: typeof chat.toObject === 'function' ? chat.toObject() : chat,
-        sender: 'agent',
-        body,
-        isInternalEvent: true,
-        internalAction: 'glpi_created',
-        internalActorName: agent.name,
-        glpiTicketId: String(glpiTicketId),
-        glpiTicketUrl,
-        timestamp: savedEvent.timestamp,
-        fromMe: true
-    };
-    if (ioInstance) ioInstance.emit('chat_event', eventData);
-    return eventData;
+  if (!chat || !agent || !glpiTicketId) throw new Error('Dados do chamado GLPI inválidos.');
+  const body = `${agent.name} abriu um chamado ${glpiTicketId}`;
+  const savedEvent = await Message.create({
+    ticketId: chat._id,
+    phoneNumber: chat.phoneNumber,
+    sender: 'agent',
+    isInternalEvent: true,
+    internalAction: 'glpi_created',
+    internalActorName: agent.name,
+    glpiTicketId: String(glpiTicketId),
+    glpiTicketUrl,
+    body,
+    timestamp: new Date(),
+  });
+  const eventData = {
+    id: savedEvent._id.toString(),
+    ticketId: chat._id.toString(),
+    chat: typeof chat.toObject === 'function' ? chat.toObject() : chat,
+    sender: 'agent',
+    body,
+    isInternalEvent: true,
+    internalAction: 'glpi_created',
+    internalActorName: agent.name,
+    glpiTicketId: String(glpiTicketId),
+    glpiTicketUrl,
+    timestamp: savedEvent.timestamp,
+    fromMe: true,
+  };
+  if (ioInstance) ioInstance.emit('chat_event', eventData);
+  return eventData;
 }
 
 module.exports = {
-    getGroupMembers,
-    resolveStoredMentions: messages => hydrateStoredMentions(messages, isClientReady ? client : null),
-    dedupeCallEvents,
-    initWhatsApp,
-    sendMessage,
-    editMessage,
-    revokeMessage,
-    getStatus,
-    destroyClient,
-    getAllChats,
-    syncRecentMessages,
-    getContactPresence,
-    getContactMetadata,
-    recordChatEvent,
-    recordGlpiTicketEvent,
-    getProfilePicture,
-    getChatMetadata
+  getGroupMembers,
+  resolveStoredMentions: (messages) =>
+    hydrateStoredMentions(messages, isClientReady ? client : null),
+  dedupeCallEvents,
+  initWhatsApp,
+  sendMessage,
+  editMessage,
+  revokeMessage,
+  getStatus,
+  destroyClient,
+  getAllChats,
+  syncRecentMessages,
+  getContactPresence,
+  getContactMetadata,
+  recordChatEvent,
+  recordGlpiTicketEvent,
+  getProfilePicture,
+  getChatMetadata,
 };

@@ -13,8 +13,13 @@
     "start:backend": "npm --prefix backend start",
     "start:frontend": "npm --prefix frontend run dev",
     "clear-database": "npm --prefix backend run clear-database",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "npm --prefix backend test && npm --prefix frontend test",
     "test:backend": "npm --prefix backend test",
     "test:frontend": "npm --prefix frontend test"
+  },
+  "devDependencies": {
+    "prettier": "3.6.2"
   }
 }

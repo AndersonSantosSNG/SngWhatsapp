@@ -6,8 +6,13 @@ let stopTrack;
 let getUserMedia;
 class Recorder {
   static isTypeSupported = () => true;
-  constructor() { this.state = 'inactive'; this.mimeType = 'audio/ogg;codecs=opus'; }
-  start() { this.state = 'recording'; }
+  constructor() {
+    this.state = 'inactive';
+    this.mimeType = 'audio/ogg;codecs=opus';
+  }
+  start() {
+    this.state = 'recording';
+  }
   stop() {
     this.state = 'inactive';
     this.ondataavailable({ data: new Blob(['audio'], { type: this.mimeType }) });
@@ -46,9 +51,13 @@ describe('AudioRecorder', () => {
     await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:audio'));
   });
   it('mantém gravação quando envio falha para tentar novamente', async () => {
-    const onSend = vi.fn().mockRejectedValueOnce(new Error('Sem conexão')).mockResolvedValueOnce({});
+    const onSend = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Sem conexão'))
+      .mockResolvedValueOnce({});
     render(<AudioRecorder onSend={onSend} />);
-    await start(); stop();
+    await start();
+    stop();
     fireEvent.click(screen.getByRole('button', { name: 'Enviar áudio' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Sem conexão');
     expect(screen.getByLabelText('Prévia do áudio')).toBeInTheDocument();
@@ -66,12 +75,17 @@ describe('AudioRecorder', () => {
   });
   it('libera microfone quando sai da conversa', async () => {
     const { unmount } = render(<AudioRecorder onSend={vi.fn()} />);
-    await start(); unmount();
+    await start();
+    unmount();
     expect(stopTrack).toHaveBeenCalled();
   });
   it('libera permissão recebida após sair da conversa', async () => {
     let resolve;
-    getUserMedia.mockReturnValue(new Promise(done => { resolve = done; }));
+    getUserMedia.mockReturnValue(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
     const { unmount } = render(<AudioRecorder onSend={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Gravar áudio' }));
     unmount();

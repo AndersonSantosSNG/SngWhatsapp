@@ -3,22 +3,56 @@ import { describe, expect, it, vi } from 'vitest';
 import ChatList from './ChatList';
 
 const chats = [
-  { _id: '1', phoneNumber: '5511999999999', contactName: 'Ana', status: 'pending', lastMessage: 'Olá' },
-  { _id: '2', phoneNumber: '5511888888888', contactName: 'Bruno', status: 'open', assignedAgent: 'agent-1', lastMessage: 'Teste' },
-  { _id: '3', phoneNumber: '120363@g.us', whatsappId: '120363@g.us', contactName: 'Equipe', status: 'closed', isGroup: true }
+  {
+    _id: '1',
+    phoneNumber: '5511999999999',
+    contactName: 'Ana',
+    status: 'pending',
+    lastMessage: 'Olá',
+  },
+  {
+    _id: '2',
+    phoneNumber: '5511888888888',
+    contactName: 'Bruno',
+    status: 'open',
+    assignedAgent: 'agent-1',
+    lastMessage: 'Teste',
+  },
+  {
+    _id: '3',
+    phoneNumber: '120363@g.us',
+    whatsappId: '120363@g.us',
+    contactName: 'Equipe',
+    status: 'closed',
+    isGroup: true,
+  },
 ];
 
-const props = { chats, loading: false, activeId: '', agentId: 'agent-1', unreadByChat: { 1: { count: 2 } }, onSelect: vi.fn(), reload: vi.fn(), onNewConversation: vi.fn(), theme: 'dark', setTheme: vi.fn() };
+const props = {
+  chats,
+  loading: false,
+  activeId: '',
+  agentId: 'agent-1',
+  unreadByChat: { 1: { count: 2 } },
+  onSelect: vi.fn(),
+  reload: vi.fn(),
+  onNewConversation: vi.fn(),
+  theme: 'dark',
+  setTheme: vi.fn(),
+};
 
 describe('ChatList', () => {
   it('ordena pelas mais recentes por padrão e permite inverter a ordem', () => {
     const datedChats = [
       { ...chats[0], lastMessageAt: '2026-09-10T10:00:00.000Z' },
       { ...chats[1], lastMessageAt: '2026-09-16T10:00:00.000Z' },
-      { ...chats[2], lastMessageAt: '2026-09-01T10:00:00.000Z' }
+      { ...chats[2], lastMessageAt: '2026-09-01T10:00:00.000Z' },
     ];
     const { container } = render(<ChatList {...props} chats={datedChats} />);
-    const names = () => [...container.querySelectorAll('.chat-list .chat-top strong')].map(element => element.textContent);
+    const names = () =>
+      [...container.querySelectorAll('.chat-list .chat-top strong')].map(
+        (element) => element.textContent,
+      );
     expect(names()).toEqual(['Bruno', 'Ana', 'Equipe']);
     fireEvent.click(screen.getByLabelText('Ordenar conversas'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Mais antigas primeiro' }));
