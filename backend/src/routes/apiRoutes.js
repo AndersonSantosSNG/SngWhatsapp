@@ -17,8 +17,28 @@ const ApiClient = require('../models/ApiClient');
 const AgentSession = require('../models/AgentSession');
 const AuditLog = require('../models/AuditLog');
 const { hashApiKey } = require('../middlewares/auth');
+const { rateLimit } = require('express-rate-limit');
 
-const SESSION_DURATION_MS = 15 * 24 * 60 * 60 * 1000;
+const SESSION_DURATION_MS = Math.min(
+  7 * 24 * 60 * 60 * 1000,
+  Math.max(60 * 60 * 1000, Number(process.env.SESSION_DURATION_HOURS || 12) * 60 * 60 * 1000),
+);
+const MIN_PASSWORD_LENGTH = 10;
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { success: false, error: 'Muitas tentativas de login. Aguarde 15 minutos.' },
+});
+const externalSendLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { success: false, error: 'Limite de envios excedido. Tente novamente em instantes.' },
+});
 
 function hashSessionToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
@@ -151,11 +171,14 @@ async function requireAgent(req, res, next) {
     if (!agent)
       return res.status(401).json({ success: false, error: 'Agente nao encontrado ou inativo.' });
     req.agent = agent;
+    req.agentSessionId = session._id;
     req.agentTokenHash = tokenHash;
     res.cookie('agent_session', token, {
       httpOnly: true,
       sameSite: 'strict',
       secure: process.env.NODE_ENV === 'production',
+      priority: 'high',
+      path: '/',
       maxAge: SESSION_DURATION_MS,
     });
     next();
@@ -172,12 +195,69 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function canManageChat(agent, chat) {
+  return (
+    agent?.role === 'admin' ||
+    (chat?.assignedAgent && String(chat.assignedAgent) === String(agent?._id || ''))
+  );
+}
+
+async function requireManagedMessage(req, res, next) {
+  try {
+    const message = await Message.findById(req.params.messageId).select('ticketId');
+    const chat = message ? await Chat.findById(message.ticketId).select('assignedAgent') : null;
+    if (!message || !chat)
+      return res.status(404).json({ success: false, error: 'Mensagem não encontrada.' });
+    if (!canManageChat(req.agent, chat))
+      return res
+        .status(403)
+        .json({ success: false, error: 'Atendimento atribuído a outro agente.' });
+    next();
+  } catch {
+    res.status(400).json({ success: false, error: 'Identificador de mensagem inválido.' });
+  }
+}
+
+async function requireManagedPanelSend(req, res, next) {
+  try {
+    const number = String(req.body?.number || '');
+    const digits = number.replace(/\D/g, '');
+    const chat = await Chat.findOne({
+      $or: [{ phoneNumber: digits }, { phoneNumber: number }, { whatsappId: number }],
+    }).select('assignedAgent');
+    if (!chat)
+      return res.status(404).json({ success: false, error: 'Atendimento não encontrado.' });
+    if (!canManageChat(req.agent, chat))
+      return res
+        .status(403)
+        .json({ success: false, error: 'Assuma o atendimento antes de enviar.' });
+    next();
+  } catch {
+    res.status(400).json({ success: false, error: 'Não foi possível validar o atendimento.' });
+  }
+}
+
+async function requireManagedTicket(req, res, next) {
+  try {
+    const chat = await Chat.findById(req.params.ticketId).select('assignedAgent');
+    if (!chat)
+      return res.status(404).json({ success: false, error: 'Atendimento não encontrado.' });
+    if (!canManageChat(req.agent, chat))
+      return res
+        .status(403)
+        .json({ success: false, error: 'Atendimento atribuído a outro agente.' });
+    next();
+  } catch {
+    res.status(400).json({ success: false, error: 'Identificador de atendimento inválido.' });
+  }
+}
+
 // --- ROTAS DE AUTENTICAÇÃO E QR CODE ---
 router.get('/health', (req, res) => res.json({ success: true, status: 'ok' }));
 router.get('/qr', requireAgent, qrController.getQrCodeJson);
 router.get('/qr-image', requireAgent, qrController.getQrCodeImage);
 
-router.post('/auth/login', async (req, res) => {
+router.post('/auth/login', loginLimiter, async (req, res) => {
   try {
     const corporateEmail = (req.body.corporateEmail || '').trim().toLowerCase();
     const password = req.body.password || '';
@@ -199,9 +279,11 @@ router.post('/auth/login', async (req, res) => {
       httpOnly: true,
       sameSite: 'strict',
       secure: process.env.NODE_ENV === 'production',
+      priority: 'high',
+      path: '/',
       maxAge: SESSION_DURATION_MS,
     });
-    res.json({ success: true, token, data: publicAgent(agent) });
+    res.json({ success: true, data: publicAgent(agent) });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -218,6 +300,8 @@ router.post('/auth/logout', requireAgent, async (req, res) => {
     httpOnly: true,
     sameSite: 'strict',
     secure: process.env.NODE_ENV === 'production',
+    priority: 'high',
+    path: '/',
   });
   res.json({ success: true });
 });
@@ -232,16 +316,19 @@ router.patch('/auth/profile', requireAgent, async (req, res) => {
     const agent = await Agent.findById(req.agent._id).select('+passwordHash +passwordSalt');
     if (!agent || !verifyPassword(currentPassword, agent))
       return res.status(401).json({ success: false, error: 'Senha atual incorreta.' });
-    if (newPassword && newPassword.length < 6)
+    if (newPassword && newPassword.length < MIN_PASSWORD_LENGTH)
       return res
         .status(400)
-        .json({ success: false, error: 'A nova senha deve ter pelo menos 6 caracteres.' });
+        .json({ success: false, error: 'A nova senha deve ter pelo menos 10 caracteres.' });
     agent.name = name;
     if (newPassword) {
       agent.passwordSalt = crypto.randomBytes(16).toString('hex');
       agent.passwordHash = crypto.scryptSync(newPassword, agent.passwordSalt, 64).toString('hex');
     }
     await agent.save();
+    if (newPassword) {
+      await AgentSession.deleteMany({ agentId: agent._id, _id: { $ne: req.agentSessionId } });
+    }
     res.json({ success: true, data: publicAgent(agent) });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -263,10 +350,10 @@ router.post('/agents', requireAgent, requireAdmin, async (req, res) => {
     const corporateEmail = (req.body.corporateEmail || '').trim().toLowerCase();
     const password = req.body.password || '';
 
-    if (!name || !corporateEmail || password.length < 6) {
+    if (!name || !corporateEmail || password.length < MIN_PASSWORD_LENGTH) {
       return res.status(400).json({
         success: false,
-        error: 'Preencha os campos e use uma senha com pelo menos 6 caracteres.',
+        error: 'Preencha os campos e use uma senha com pelo menos 10 caracteres.',
       });
     }
 
@@ -423,6 +510,7 @@ router.get('/audit-logs', requireAgent, requireAdmin, async (req, res) => {
 
 router.post(
   '/send-message',
+  externalSendLimiter,
   checkApiKey,
   upload.single('file'),
   messageController.handleSendMessage,
@@ -433,6 +521,7 @@ router.post(
   '/panel/send-message',
   requireAgent,
   upload.single('file'),
+  requireManagedPanelSend,
   (req, res, next) => {
     req.body.agentId = req.agent._id.toString();
     next();
@@ -668,10 +757,15 @@ router.get('/messages/:messageId/media', requireAgent, async (req, res) => {
     const absolutePath = path.resolve(mediaDirectory, message.mediaPath);
     if (!absolutePath.startsWith(`${mediaDirectory}${path.sep}`)) return res.status(400).end();
 
-    res.setHeader('Content-Type', message.mediaMimeType || 'application/octet-stream');
+    const inlineMimeTypes = /^(image\/(?:avif|gif|jpeg|png|webp)|audio\/|video\/)/i;
+    const mimeType = message.mediaMimeType || 'application/octet-stream';
+    const disposition = inlineMimeTypes.test(mimeType) ? 'inline' : 'attachment';
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    res.setHeader('Content-Type', mimeType);
     res.setHeader(
       'Content-Disposition',
-      `inline; filename="${encodeURIComponent(message.mediaFileName || 'arquivo')}"`,
+      `${disposition}; filename="${encodeURIComponent(message.mediaFileName || 'arquivo')}"`,
     );
     res.sendFile(absolutePath);
   } catch (err) {
@@ -679,7 +773,7 @@ router.get('/messages/:messageId/media', requireAgent, async (req, res) => {
   }
 });
 
-router.patch('/messages/:messageId', requireAgent, async (req, res) => {
+router.patch('/messages/:messageId', requireAgent, requireManagedMessage, async (req, res) => {
   try {
     const data = await whatsappService.editMessage(req.params.messageId, req.body?.body);
     await audit(req, 'message.edit', {
@@ -701,27 +795,32 @@ router.patch('/messages/:messageId', requireAgent, async (req, res) => {
   }
 });
 
-router.delete('/messages/:messageId/everyone', requireAgent, async (req, res) => {
-  try {
-    const data = await whatsappService.revokeMessage(req.params.messageId);
-    await audit(req, 'message.revoke', {
-      targetType: 'message',
-      targetId: req.params.messageId,
-      details: { ticketId: data.ticketId },
-    });
-    res.json({ success: true, data });
-  } catch (err) {
-    await audit(req, 'message.revoke', {
-      targetType: 'message',
-      targetId: req.params.messageId,
-      success: false,
-      details: { error: err.message },
-    });
-    res
-      .status(400)
-      .json({ success: false, error: err.message || 'Nao foi possivel apagar a mensagem.' });
-  }
-});
+router.delete(
+  '/messages/:messageId/everyone',
+  requireAgent,
+  requireManagedMessage,
+  async (req, res) => {
+    try {
+      const data = await whatsappService.revokeMessage(req.params.messageId);
+      await audit(req, 'message.revoke', {
+        targetType: 'message',
+        targetId: req.params.messageId,
+        details: { ticketId: data.ticketId },
+      });
+      res.json({ success: true, data });
+    } catch (err) {
+      await audit(req, 'message.revoke', {
+        targetType: 'message',
+        targetId: req.params.messageId,
+        success: false,
+        details: { error: err.message },
+      });
+      res
+        .status(400)
+        .json({ success: false, error: err.message || 'Nao foi possivel apagar a mensagem.' });
+    }
+  },
+);
 
 router.get('/tickets/:ticketId/profile-picture', requireAgent, async (req, res) => {
   try {
@@ -776,8 +875,11 @@ router.post('/tickets/claim', requireAgent, async (req, res) => {
 router.post('/tickets/close', requireAgent, async (req, res) => {
   try {
     const { ticketId } = req.body;
-    const chat = await Chat.findByIdAndUpdate(
-      ticketId,
+    const chat = await Chat.findOneAndUpdate(
+      {
+        _id: ticketId,
+        ...(req.agent.role === 'admin' ? {} : { assignedAgent: req.agent._id.toString() }),
+      },
       { status: 'closed', updatedAt: new Date() },
       { returnDocument: 'after' },
     );
@@ -799,6 +901,12 @@ router.post('/tickets/unclaim', requireAgent, async (req, res) => {
       return res.status(404).json({ success: false, error: 'Ticket não encontrado.' });
     }
 
+    if (!canManageChat(req.agent, chat)) {
+      return res
+        .status(403)
+        .json({ success: false, error: 'Atendimento atribuído a outro agente.' });
+    }
+
     chat.status = 'pending';
     chat.assignedAgent = null;
     chat.updatedAt = new Date();
@@ -814,41 +922,46 @@ router.post('/tickets/unclaim', requireAgent, async (req, res) => {
   }
 });
 
-router.get('/tickets/:ticketId/glpi/messages', requireAgent, async (req, res) => {
-  try {
-    const chat = await Chat.findById(req.params.ticketId);
-    if (!chat) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
-    const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
-    const messages = await Message.find({
-      ticketId: chat._id,
-      timestamp: { $gte: since },
-      isInternalEvent: { $ne: true },
-    })
-      .sort({ timestamp: 1 })
-      .select(
-        '_id sender body hasMedia mediaPath mediaFileName mediaMimeType timestamp groupSenderName',
-      )
-      .lean();
-    res.json({
-      success: true,
-      data: messages.map((message) => ({
-        _id: message._id,
-        sender: message.sender,
-        body: message.body,
-        hasMedia: message.hasMedia,
-        attachmentAvailable: Boolean(message.hasMedia && message.mediaPath),
-        mediaFileName: message.mediaFileName,
-        mediaMimeType: message.mediaMimeType,
-        timestamp: message.timestamp,
-        groupSenderName: message.groupSenderName,
-      })),
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'Não foi possível carregar as mensagens.' });
-  }
-});
+router.get(
+  '/tickets/:ticketId/glpi/messages',
+  requireAgent,
+  requireManagedTicket,
+  async (req, res) => {
+    try {
+      const chat = await Chat.findById(req.params.ticketId);
+      if (!chat) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
+      const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
+      const messages = await Message.find({
+        ticketId: chat._id,
+        timestamp: { $gte: since },
+        isInternalEvent: { $ne: true },
+      })
+        .sort({ timestamp: 1 })
+        .select(
+          '_id sender body hasMedia mediaPath mediaFileName mediaMimeType timestamp groupSenderName',
+        )
+        .lean();
+      res.json({
+        success: true,
+        data: messages.map((message) => ({
+          _id: message._id,
+          sender: message.sender,
+          body: message.body,
+          hasMedia: message.hasMedia,
+          attachmentAvailable: Boolean(message.hasMedia && message.mediaPath),
+          mediaFileName: message.mediaFileName,
+          mediaMimeType: message.mediaMimeType,
+          timestamp: message.timestamp,
+          groupSenderName: message.groupSenderName,
+        })),
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: 'Não foi possível carregar as mensagens.' });
+    }
+  },
+);
 
-router.post('/tickets/:ticketId/glpi', requireAgent, async (req, res) => {
+router.post('/tickets/:ticketId/glpi', requireAgent, requireManagedTicket, async (req, res) => {
   try {
     const title = String(req.body?.title || '').trim();
     if (!title)

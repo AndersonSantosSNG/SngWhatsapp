@@ -18,10 +18,10 @@ async function main() {
       .trim()
       .toLowerCase();
     const password =
-      process.env.ADMIN_PASSWORD || (await terminal.question('Senha (minimo 6 caracteres): '));
+      process.env.ADMIN_PASSWORD || (await terminal.question('Senha (minimo 10 caracteres): '));
 
-    if (!name || !corporateEmail || password.length < 6) {
-      throw new Error('Informe nome, e-mail e uma senha com pelo menos 6 caracteres.');
+    if (!name || !corporateEmail || password.length < 10) {
+      throw new Error('Informe nome, e-mail e uma senha com pelo menos 10 caracteres.');
     }
 
     await mongoose.connect(process.env.MONGODB_URI);

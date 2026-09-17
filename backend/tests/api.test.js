@@ -35,7 +35,9 @@ async function login(email) {
   const response = await request(app)
     .post('/api/auth/login')
     .send({ corporateEmail: email, password: 'secret123' });
-  return { response, authorization: `Bearer ${response.body.token}` };
+  const cookie = response.headers['set-cookie']?.[0] || '';
+  const token = cookie.match(/agent_session=([^;]+)/)?.[1] || '';
+  return { response, authorization: `Bearer ${token}` };
 }
 
 beforeAll(async () => {
@@ -97,9 +99,13 @@ describe('autenticação e autorização', () => {
 
 describe('atendimentos', () => {
   it('lista apenas mensagens das últimas 48 horas para seleção no GLPI', async () => {
-    await createAgent('agent@sng.com.br');
+    const agent = await createAgent('agent@sng.com.br');
     const { authorization } = await login('agent@sng.com.br');
-    const ticket = await Chat.create({ phoneNumber: '5500000000001' });
+    const ticket = await Chat.create({
+      phoneNumber: '5500000000001',
+      assignedAgent: agent._id.toString(),
+      status: 'open',
+    });
     await Message.create({
       ticketId: ticket._id,
       phoneNumber: ticket.phoneNumber,

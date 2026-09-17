@@ -2,11 +2,13 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const http = require('http');
 const { Server } = require('socket.io');
 const crypto = require('crypto');
 const AgentSession = require('./src/models/AgentSession');
 const Agent = require('./src/models/Agent');
+const { httpCorsOptions, socketCorsOrigin } = require('./src/config/cors');
 
 // Importação da Conexão com o MongoDB
 const connectDB = require('./src/config/database');
@@ -20,12 +22,39 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
+if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
+
 const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] },
+  cors: {
+    origin: socketCorsOrigin,
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
 });
 
 // Middlewares
-app.use(cors({ origin: '*' }));
+app.disable('x-powered-by');
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://cdnjs.cloudflare.com'],
+        fontSrc: ["'self'", 'https://cdnjs.cloudflare.com', 'data:'],
+        imgSrc: ["'self'", 'data:', 'blob:'],
+        mediaSrc: ["'self'", 'blob:'],
+        connectSrc: ["'self'", 'https://whatsapp.sng.com.br', 'wss://whatsapp.sng.com.br'],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        baseUri: ["'self'"],
+      },
+    },
+    crossOriginResourcePolicy: { policy: 'same-origin' },
+    hsts: process.env.NODE_ENV === 'production' ? undefined : false,
+  }),
+);
+app.use(cors(httpCorsOptions));
 app.use(express.json({ limit: '10mb' }));
 const frontendPath = path.join(__dirname, '..', 'frontend', 'dist');
 app.use(express.static(frontendPath));
@@ -70,6 +99,22 @@ app.use(
   },
   apiRoutes,
 );
+
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const isCorsError = /origem/i.test(err?.message || '');
+  const isUploadError = err?.name === 'MulterError';
+  const status = isCorsError ? 403 : isUploadError ? 400 : 500;
+  if (status === 500) console.error('[HTTP]', err);
+  return res.status(status).json({
+    success: false,
+    error: isCorsError
+      ? 'Origem não autorizada.'
+      : isUploadError
+        ? 'O arquivo enviado é inválido ou excede os limites permitidos.'
+        : 'Erro interno do servidor.',
+  });
+});
 
 // WebSocket
 io.on('connection', (socket) => {

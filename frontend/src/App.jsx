@@ -44,6 +44,10 @@ export default function App() {
   const [collapsed, setCollapsedState] = useState(storage.get('sidebarCollapsed') === 'true');
   const [authNotice, setAuthNotice] = useState('');
   const [toast, setToast] = useState(null);
+  useEffect(() => {
+    // Remove tokens legados; a sessão do painel agora usa somente cookie HttpOnly.
+    storage.remove('agentAuthToken');
+  }, []);
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
     clearTimeout(showToast.timer);
@@ -61,7 +65,6 @@ export default function App() {
   useEffect(() => {
     const handleSessionExpired = (event) => {
       socket.disconnect();
-      storage.remove('agentAuthToken');
       setAgent(null);
       setActiveChat(null);
       setMessages([]);
@@ -188,11 +191,10 @@ export default function App() {
         const result = await api('/auth/me');
         if (!active) return;
         setAgent(result.data);
-        socket.auth = { token: storage.get('agentAuthToken') };
+        socket.auth = {};
         socket.connect();
         await Promise.allSettled([loadChats(), loadWhatsAppStatus()]);
       } catch {
-        storage.remove('agentAuthToken');
         if (active) setAgent(null);
       } finally {
         if (active) setInitializing(false);
@@ -369,8 +371,7 @@ export default function App() {
       method: 'POST',
       body: JSON.stringify({ corporateEmail, password }),
     });
-    storage.set('agentAuthToken', result.token);
-    socket.auth = { token: result.token };
+    socket.auth = {};
     socket.connect();
     setAuthNotice('');
     setAgent(result.data);
@@ -381,7 +382,6 @@ export default function App() {
       await api('/auth/logout', { method: 'POST' });
     } catch {}
     socket.disconnect();
-    storage.remove('agentAuthToken');
     setUnreadByChat({});
     setUnreadMarker(null);
     setAgent(null);

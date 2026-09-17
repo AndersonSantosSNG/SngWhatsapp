@@ -150,7 +150,7 @@ export default function Settings({ agent, onAgentChange }) {
             <input
               name="newPassword"
               type="password"
-              minLength="6"
+              minLength="10"
               placeholder="Mínimo de 6 caracteres"
             />
           </label>
@@ -183,7 +183,7 @@ export default function Settings({ agent, onAgentChange }) {
               <input
                 name="password"
                 type="password"
-                minLength="6"
+                minLength="10"
                 placeholder="Mínimo de 6 caracteres"
                 required
               />

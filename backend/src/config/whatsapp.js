@@ -6,8 +6,6 @@ module.exports = {
     headless: true,
     protocolTimeout: 120000,
     args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-accelerated-2d-canvas',
       '--no-first-run',
@@ -15,8 +13,10 @@ module.exports = {
       '--disable-gpu',
       '--no-default-browser-check',
       '--disable-infobars',
-      '--disable-web-security',
-      '--disable-site-isolation-trials',
     ],
   },
 };
+
+if (process.env.CHROMIUM_DISABLE_SANDBOX === 'true') {
+  module.exports.puppeteer.args.push('--no-sandbox', '--disable-setuid-sandbox');
+}

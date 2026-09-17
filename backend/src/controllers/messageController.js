@@ -1,4 +1,25 @@
 const whatsappService = require('../services/whatsappService');
+const dns = require('dns').promises;
+
+const BLOCKED_UPLOAD_MIME =
+  /^(text\/html|image\/svg\+xml|application\/(javascript|x-javascript|x-msdownload))$/i;
+
+function isPrivateAddress(address) {
+  return (
+    /^(127\.|10\.|0\.|169\.254\.|192\.168\.|::1$|fc|fd|fe80)/i.test(address) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(address)
+  );
+}
+
+async function validateRemoteFileUrl(value) {
+  if (!value) return;
+  const url = new URL(value);
+  if (url.protocol !== 'https:') throw new Error('A URL do arquivo deve usar HTTPS.');
+  const addresses = await dns.lookup(url.hostname, { all: true });
+  if (!addresses.length || addresses.some(({ address }) => isPrivateAddress(address))) {
+    throw new Error('A URL do arquivo aponta para uma rede não permitida.');
+  }
+}
 
 const handleSendMessage = async (req, res) => {
   const { isClientReady } = whatsappService.getStatus();
@@ -32,6 +53,14 @@ const handleSendMessage = async (req, res) => {
   }
 
   try {
+    if (String(message || '').length > 4096) throw new Error('A mensagem é muito longa.');
+    if (BLOCKED_UPLOAD_MIME.test(String(file?.mimetype || mimeType || ''))) {
+      throw new Error('Este tipo de arquivo não é permitido.');
+    }
+    if (fileBase64 && Buffer.byteLength(fileBase64, 'base64') > 15 * 1024 * 1024) {
+      throw new Error('O arquivo excede o limite de 15 MB.');
+    }
+    await validateRemoteFileUrl(fileUrl);
     await whatsappService.sendMessage({
       number,
       message,

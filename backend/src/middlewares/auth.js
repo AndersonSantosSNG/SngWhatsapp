@@ -5,11 +5,22 @@ function hashApiKey(apiKey) {
   return crypto.createHash('sha256').update(apiKey).digest('hex');
 }
 
+function safeEqual(left, right) {
+  const leftBuffer = Buffer.from(String(left || ''));
+  const rightBuffer = Buffer.from(String(right || ''));
+  return (
+    leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer)
+  );
+}
+
 const checkApiKey = async (req, res, next) => {
   try {
     const apiKey = String(req.headers['x-api-key'] || '');
     if (!apiKey) return res.status(401).json({ error: 'Chave de API ausente.' });
-    if (process.env.API_SECRET_KEY && apiKey === process.env.API_SECRET_KEY) return next();
+    if (process.env.API_SECRET_KEY && safeEqual(apiKey, process.env.API_SECRET_KEY)) {
+      req.apiClient = { name: 'legacy-master-key' };
+      return next();
+    }
 
     const apiClient = await ApiClient.findOne({ keyHash: hashApiKey(apiKey), active: true }).select(
       '+keyHash',
