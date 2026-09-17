@@ -9,7 +9,6 @@ module.exports = {
       '--disable-dev-shm-usage',
       '--disable-accelerated-2d-canvas',
       '--no-first-run',
-      '--no-zygote',
       '--disable-gpu',
       '--no-default-browser-check',
       '--disable-infobars',
@@ -18,5 +17,5 @@ module.exports = {
 };
 
 if (process.env.CHROMIUM_DISABLE_SANDBOX === 'true') {
-  module.exports.puppeteer.args.push('--no-sandbox', '--disable-setuid-sandbox');
+  module.exports.puppeteer.args.push('--no-sandbox', '--disable-setuid-sandbox', '--no-zygote');
 }
