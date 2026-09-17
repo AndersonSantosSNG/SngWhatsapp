@@ -1,14 +1,23 @@
 require('./whatsappCompatibility').applyCompatibility();
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
-const fs = require('fs/promises');
-const path = require('path');
-const { randomUUID } = require('crypto');
 const qrcodeTerminal = require('qrcode-terminal');
 const config = require('../config/whatsapp');
 const { addToQueue } = require('./queueService');
 const { convertVoiceAudio } = require('./audioService');
 const { sendAudio } = require('./audioSendService');
 const { displayMessageText, hydrateStoredMentions } = require('./messageContent');
+const {
+  dedupeCallEvents,
+  getCallEventDetails,
+  getCallSignature,
+  getStoredHistoryMessageId,
+  getWhatsAppMessageId,
+  isCallLogMessage,
+  isWithinMessageWindow,
+  mergeMessageAck,
+} = require('./whatsapp/messageUtils');
+const { createMediaService } = require('./whatsapp/mediaService');
+const { createChatEventService } = require('./whatsapp/chatEventService');
 
 const Chat = require('../models/Chat');
 const Message = require('../models/Message');
@@ -21,8 +30,6 @@ let currentQrCode = null;
 const recentMessages = new Map();
 const pendingMessageAcks = new Map();
 const recentCallEvents = new Map();
-const mediaDirectory = path.join(__dirname, '..', '..', '..', 'storage', 'media');
-const pendingOutgoingMedia = [];
 const historySyncDays = Math.max(1, Number.parseInt(process.env.HISTORY_SYNC_DAYS || '30', 10));
 const historySyncLimit = Math.max(1, Number.parseInt(process.env.HISTORY_SYNC_LIMIT || '1000', 10));
 const historySyncMedia = process.env.HISTORY_SYNC_MEDIA !== 'false';
@@ -31,300 +38,18 @@ const MESSAGE_REVOKE_WINDOW_MS = 60 * 60 * 60 * 1000;
 let historySyncPromise = null;
 let callPollTimer = null;
 
-function isWithinMessageWindow(message, windowMs) {
-  const sentAt = new Date(message.timestamp || message.createdAt || 0).getTime();
-  return Number.isFinite(sentAt) && Date.now() - sentAt <= windowMs;
-}
-
-function getMediaExtension(media) {
-  const originalExtension = path.extname(media.filename || '').replace(/[^.a-zA-Z0-9]/g, '');
-  if (originalExtension) return originalExtension.toLowerCase();
-
-  const extensions = {
-    'image/jpeg': '.jpg',
-    'image/png': '.png',
-    'image/webp': '.webp',
-    'image/gif': '.gif',
-    'video/mp4': '.mp4',
-    'audio/ogg': '.ogg',
-    'audio/mpeg': '.mp3',
-    'application/pdf': '.pdf',
-  };
-  return extensions[media.mimetype] || '';
-}
-
-async function persistMedia(media) {
-  if (!media?.data) return null;
-
-  await fs.mkdir(mediaDirectory, { recursive: true });
-  const storedName = `${randomUUID()}${getMediaExtension(media)}`;
-  await fs.writeFile(path.join(mediaDirectory, storedName), Buffer.from(media.data, 'base64'));
-
-  return {
-    hasMedia: true,
-    mediaPath: storedName,
-    mediaMimeType: media.mimetype || 'application/octet-stream',
-    mediaFileName: media.filename || storedName,
-  };
-}
-
-async function takePendingOutgoingMedia(targetChatId) {
-  const now = Date.now();
-  let index = pendingOutgoingMedia.findIndex((item) => item.targetJid === targetChatId);
-
-  if (index < 0) {
-    index = pendingOutgoingMedia.findIndex((item) => now - item.createdAt < 60000);
-  }
-  if (index < 0) return null;
-
-  const [pending] = pendingOutgoingMedia.splice(index, 1);
-  return persistMedia(pending.media);
-}
-
-async function downloadMessageMediaFallback(msg) {
-  const raw = msg._data || {};
-  const messageId = getWhatsAppMessageId(msg);
-  const mediaData = {
-    directPath: raw.directPath,
-    encFilehash: raw.encFilehash,
-    filehash: raw.filehash,
-    mediaKey: raw.mediaKey || msg.mediaKey,
-    mediaKeyTimestamp: raw.mediaKeyTimestamp,
-    type: raw.type || msg.type,
-    mimetype: raw.mimetype,
-    filename: raw.filename,
-    size: raw.size,
-  };
-
-  return client.pupPage.evaluate(
-    async ({ id, fallbackMedia }) => {
-      let model = null;
-      try {
-        model = window.require('WAWebCollections').Msg.get(id);
-      } catch (err) {}
-
-      if (!model) {
-        try {
-          model = (await window.require('WAWebCollections').Msg.getMessagesById([id]))
-            ?.messages?.[0];
-        } catch (err) {}
-      }
-
-      if (model?.mediaData?.mediaStage !== 'RESOLVED') {
-        try {
-          await model.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1 });
-        } catch (err) {}
-      }
-
-      const source = model || fallbackMedia;
-      if (!source?.directPath || !source?.mediaKey) return null;
-
-      const mockQpl = {
-        addAnnotations() {
-          return this;
-        },
-        addPoint() {
-          return this;
-        },
-      };
-      const decryptedMedia = await window
-        .require('WAWebDownloadManager')
-        .downloadManager.downloadAndMaybeDecrypt({
-          directPath: source.directPath,
-          encFilehash: source.encFilehash,
-          filehash: source.filehash,
-          mediaKey: source.mediaKey,
-          mediaKeyTimestamp: source.mediaKeyTimestamp,
-          type: source.type,
-          signal: new AbortController().signal,
-          downloadQpl: mockQpl,
-        });
-
-      return {
-        data: await window.WWebJS.arrayBufferToBase64Async(decryptedMedia),
-        mimetype: source.mimetype || fallbackMedia.mimetype,
-        filename: source.filename || fallbackMedia.filename,
-        filesize: source.size || fallbackMedia.size,
-      };
-    },
-    { id: messageId, fallbackMedia: mediaData },
-  );
-}
-
-async function saveMessageMedia(msg) {
-  if (
-    !msg.hasMedia &&
-    !['image', 'video', 'audio', 'ptt', 'document', 'sticker'].includes(msg.type)
-  )
-    return null;
-
-  try {
-    if (msg.id && !msg.id._serialized) {
-      msg.id._serialized = getWhatsAppMessageId(msg);
-    }
-
-    const media = await Promise.race([
-      (async () => {
-        try {
-          const standardMedia = await msg.downloadMedia();
-          if (standardMedia?.data) return standardMedia;
-        } catch (err) {}
-
-        return downloadMessageMediaFallback(msg);
-      })(),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Timeout ao baixar midia')), 30000),
-      ),
-    ]);
-    if (!media?.data) return null;
-
-    return persistMedia(media);
-  } catch (err) {
-    console.error(`[MIDIA] Nao foi possivel baixar a mensagem: ${err.message || err}`);
-    return null;
-  }
-}
-
-function getWhatsAppMessageId(msg) {
-  const id = msg?.id;
-  if (!id) return '';
-
-  if (typeof id === 'string') return id;
-  if (id._serialized) return id._serialized;
-  if (id.$1) return id.$1;
-
-  const messageId = id.id || '';
-  const remote = id.remote || msg.to || msg.from || '';
-  return messageId && remote ? `${id.fromMe ? 'true' : 'false'}_${remote}_${messageId}` : messageId;
-}
-
-function mergeMessageAck(previousAck, nextAck) {
-  if (nextAck === -1) return -1;
-  if (previousAck === -1) return nextAck;
-  return Math.max(previousAck ?? 0, nextAck ?? 0);
-}
-
-function getCallEventDetails(call) {
-  const fromMe = Boolean(call.fromMe ?? call.outgoing);
-  const isVideo = Boolean(call.isVideo ?? call.isVideoCall);
-  const outcome = String(
-    call.outcome || call.callOutcome || call.callStatus || call.subtype || '',
-  ).toLowerCase();
-  const duration = Number(call.duration || call.callDuration || 0);
-  const callKind = isVideo ? 'vídeo' : 'voz';
-  const rejected = /reject|declin|refus|deny/.test(outcome);
-  const missed = /miss|timeout|no.?answer|unanswered/.test(outcome);
-  const answered = duration > 0 || /accept|connect|answer|complete/.test(outcome);
-  let internalAction;
-  let body;
-
-  if (rejected) {
-    internalAction = 'call_rejected';
-    body = `Chamada de ${callKind} negada`;
-  } else if (!fromMe && (missed || (call.isFinal && !answered))) {
-    internalAction = 'call_missed';
-    body = `Chamada de ${callKind} perdida`;
-  } else if (fromMe) {
-    internalAction = 'call_made';
-    body = `Chamada de ${callKind} realizada`;
-  } else {
-    internalAction = 'call_received';
-    body = `Chamada de ${callKind} recebida`;
-  }
-  if (duration > 0)
-    body += ` (${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, '0')})`;
-  return { fromMe, internalAction, body };
-}
-
-function isCallLogMessage(message) {
-  return message?.type === 'call_log' || message?._data?.type === 'call_log';
-}
-
-function getStoredHistoryMessageId(message) {
-  const id = getWhatsAppMessageId(message);
-  return id && isCallLogMessage(message) ? `call-log:${id}` : id;
-}
-
-function getCallSignature(peerId, body, timestamp) {
-  const timeBucket = Math.floor(new Date(timestamp).getTime() / 5000);
-  return `${peerId || ''}|${body || ''}|${timeBucket}`;
-}
-
-function dedupeCallEvents(messages) {
-  const seen = new Set();
-  return messages.filter((message) => {
-    if (!message.isInternalEvent || !String(message.internalAction || '').startsWith('call_'))
-      return true;
-    const signature = getCallSignature(
-      message.ticketId,
-      message.body,
-      message.timestamp || message.createdAt,
-    );
-    if (seen.has(signature)) return false;
-    seen.add(signature);
-    return true;
-  });
-}
-
-async function getProfilePicUrl(contactId) {
-  if (!client || !contactId) return '';
-
-  try {
-    const profilePic = await client.pupPage.evaluate(async (id) => {
-      try {
-        const wid = window.require('WAWebWidFactory').createWid(id);
-        const result = await window.require('WAWebFindChatAction').findOrCreateLatestChat(wid);
-        const chat = result?.chat || result;
-
-        if (!chat) return undefined;
-
-        return await window
-          .require('WAWebContactProfilePicThumbBridge')
-          .requestProfilePicFromServer(chat);
-      } catch (err) {
-        if (err?.name === 'ServerStatusCodeError') return undefined;
-        throw err;
-      }
-    }, contactId);
-
-    return profilePic?.eurl || '';
-  } catch (err) {
-    console.warn(`[FOTO] Foto indisponivel para ${contactId}: ${err.message || err}`);
-    return '';
-  }
-}
-
-async function downloadProfilePicture(url) {
-  if (!url) return null;
-
-  try {
-    const response = await fetch(url);
-    if (!response.ok) return null;
-
-    return {
-      buffer: Buffer.from(await response.arrayBuffer()),
-      contentType: response.headers.get('content-type') || 'image/jpeg',
-    };
-  } catch (err) {
-    return null;
-  }
-}
-
-async function getProfilePicture(identifier, isGroup = false, cachedUrl = '') {
-  if (!isClientReady || !client) return null;
-
-  const cachedPicture = await downloadProfilePicture(cachedUrl);
-  if (cachedPicture) return cachedPicture;
-
-  const contactId = isGroup
-    ? identifier
-    : identifier?.includes('@')
-      ? identifier
-      : `${identifier.replace(/\D/g, '')}@c.us`;
-  const url = await getProfilePicUrl(contactId);
-
-  return downloadProfilePicture(url);
-}
+const {
+  downloadMessageMediaFallback,
+  getProfilePicUrl,
+  getProfilePicture,
+  pendingOutgoingMedia,
+  persistMedia,
+  saveMessageMedia,
+  takePendingOutgoingMedia,
+} = createMediaService({
+  getClient: () => client,
+  isClientReady: () => isClientReady,
+});
 
 function getChatDisplayName(chat, fallback = '') {
   return (
@@ -2039,74 +1764,9 @@ function getStatus() {
   return { isClientReady, currentQrCode };
 }
 
-async function recordChatEvent(chat, agent, action) {
-  const actionLabels = {
-    claimed: 'assumiu o atendimento',
-    unclaimed: 'devolveu o atendimento',
-    closed: 'encerrou o atendimento',
-  };
-  if (!chat || !agent || !actionLabels[action]) throw new Error('Evento interno invalido.');
-
-  const savedEvent = await Message.create({
-    ticketId: chat._id,
-    phoneNumber: chat.phoneNumber,
-    sender: 'agent',
-    isInternalEvent: true,
-    internalAction: action,
-    internalActorName: agent.name,
-    body: `${agent.name} ${actionLabels[action]}`,
-    timestamp: new Date(),
-  });
-
-  const eventData = {
-    id: savedEvent._id.toString(),
-    ticketId: chat._id.toString(),
-    chat: typeof chat.toObject === 'function' ? chat.toObject() : chat,
-    sender: 'agent',
-    body: savedEvent.body,
-    isInternalEvent: true,
-    internalAction: action,
-    internalActorName: agent.name,
-    timestamp: savedEvent.timestamp,
-    fromMe: true,
-  };
-
-  if (ioInstance) ioInstance.emit('chat_event', eventData);
-  return eventData;
-}
-
-async function recordGlpiTicketEvent(chat, agent, glpiTicketId, glpiTicketUrl) {
-  if (!chat || !agent || !glpiTicketId) throw new Error('Dados do chamado GLPI inválidos.');
-  const body = `${agent.name} abriu um chamado ${glpiTicketId}`;
-  const savedEvent = await Message.create({
-    ticketId: chat._id,
-    phoneNumber: chat.phoneNumber,
-    sender: 'agent',
-    isInternalEvent: true,
-    internalAction: 'glpi_created',
-    internalActorName: agent.name,
-    glpiTicketId: String(glpiTicketId),
-    glpiTicketUrl,
-    body,
-    timestamp: new Date(),
-  });
-  const eventData = {
-    id: savedEvent._id.toString(),
-    ticketId: chat._id.toString(),
-    chat: typeof chat.toObject === 'function' ? chat.toObject() : chat,
-    sender: 'agent',
-    body,
-    isInternalEvent: true,
-    internalAction: 'glpi_created',
-    internalActorName: agent.name,
-    glpiTicketId: String(glpiTicketId),
-    glpiTicketUrl,
-    timestamp: savedEvent.timestamp,
-    fromMe: true,
-  };
-  if (ioInstance) ioInstance.emit('chat_event', eventData);
-  return eventData;
-}
+const { recordChatEvent, recordGlpiTicketEvent } = createChatEventService({
+  getIo: () => ioInstance,
+});
 
 module.exports = {
   getGroupMembers,

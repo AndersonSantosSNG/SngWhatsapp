@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { io } from 'socket.io-client';
 import { api, deleteMessage, editMessage, sendMessage } from './services/api';
+import { socket } from './services/socket';
+import { useChatSocketEvents } from './hooks/useChatSocketEvents';
 import Sidebar from './components/Sidebar';
 import ChatList from './components/ChatList';
 import ChatPanel from './components/ChatPanel';
@@ -9,21 +10,10 @@ import Settings from './components/Settings';
 import Dashboard from './components/Dashboard';
 import { storage } from './services/storage';
 import logo from './assets/logo.png';
-import notificationSound from './assets/notification.mp3';
 import alertFavicon from './assets/alertlogo.ico';
 import defaultFavicon from './assets/favicon.ico';
 
-const socket = io({
-  autoConnect: false,
-  transports: ['websocket', 'polling'],
-  reconnection: true,
-  reconnectionAttempts: Infinity,
-  reconnectionDelay: 1000,
-  reconnectionDelayMax: 1000,
-});
-
 export default function App() {
-  const notificationAudio = useRef(null);
   const [initializing, setInitializing] = useState(true);
   const [serverAvailable, setServerAvailable] = useState(false);
   const [agent, setAgent] = useState(null);
@@ -44,15 +34,16 @@ export default function App() {
   const [collapsed, setCollapsedState] = useState(storage.get('sidebarCollapsed') === 'true');
   const [authNotice, setAuthNotice] = useState('');
   const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
   useEffect(() => {
     // Remove tokens legados; a sessão do painel agora usa somente cookie HttpOnly.
     storage.remove('agentAuthToken');
   }, []);
-  const showToast = (message, type = 'success') => {
+  const showToast = useCallback((message, type = 'success') => {
     setToast({ message, type });
-    clearTimeout(showToast.timer);
-    showToast.timer = setTimeout(() => setToast(null), 4500);
-  };
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 4500);
+  }, []);
 
   const setTheme = (value) => {
     setThemeState(value);
@@ -228,105 +219,19 @@ export default function App() {
     };
   }, [initializing, serverAvailable, agent]);
 
-  useEffect(() => {
-    const onConnect = () => {
-      setServerAvailable(true);
-      loadWhatsAppStatus();
-      loadChats({ showLoading: false }).catch(console.error);
-    };
-    const onDisconnect = () => {
-      setServerAvailable(false);
-      setConnected(false);
-      setQr('');
-      showToast('Conexão com o servidor perdida. Tentando reconectar...', 'error');
-    };
-    const onQr = (data) => {
-      setQr(data.qr);
-      setConnected(false);
-    };
-    const onMessage = (data) => {
-      const message = data.message || data;
-      setConnected(true);
-      if (data.chat) syncChat(data.chat);
-      else loadChats({ showLoading: false }).catch(console.error);
-      if (activeChat?._id === message.ticketId)
-        setMessages((current) =>
-          current.some((item) => (item.id || item._id) === message.id)
-            ? current
-            : [...current, message],
-        );
-      if (agent && !message.fromMe) {
-        if (!notificationAudio.current) notificationAudio.current = new Audio(notificationSound);
-        notificationAudio.current.currentTime = 0;
-        notificationAudio.current.play().catch(() => {});
-      }
-      if (agent && !message.fromMe && activeChat?._id !== message.ticketId) {
-        setUnreadByChat((current) => {
-          const unread = current[message.ticketId];
-          return {
-            ...current,
-            [message.ticketId]: {
-              count: (unread?.count || 0) + 1,
-              firstMessageId: unread?.firstMessageId || message.id,
-            },
-          };
-        });
-      }
-    };
-    const onAck = ({ messageId, ack }) =>
-      setMessages((current) =>
-        current.map((message) =>
-          (message.id || message._id) === messageId ? { ...message, ack } : message,
-        ),
-      );
-    const onEdit = ({ messageId, body, editedAt }) =>
-      setMessages((current) =>
-        current.map((message) =>
-          String(message.id || message._id) === String(messageId)
-            ? { ...message, body, editedAt }
-            : message,
-        ),
-      );
-    const onRevoke = ({ messageId, deletedAt }) =>
-      setMessages((current) =>
-        current.map((message) =>
-          String(message.id || message._id) === String(messageId)
-            ? { ...message, deletedAt }
-            : message,
-        ),
-      );
-    const onTicketEvent = (event) => {
-      if (event.chat) syncChat(event.chat);
-      else loadChats({ showLoading: false }).catch(console.error);
-      if (activeChat?._id === event.ticketId)
-        setMessages((current) =>
-          current.some((item) => (item.id || item._id) === event.id)
-            ? current
-            : [...current, event],
-        );
-    };
-    const onHistorySyncComplete = () => loadChats({ showLoading: false }).catch(console.error);
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    socket.on('qr_code', onQr);
-    socket.on('new_message', onMessage);
-    socket.on('message_ack', onAck);
-    socket.on('message_edit', onEdit);
-    socket.on('message_revoke', onRevoke);
-    socket.on('ticket_event', onTicketEvent);
-    socket.on('history_sync_complete', onHistorySyncComplete);
-    return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-      socket.off('qr_code', onQr);
-      socket.off('new_message', onMessage);
-      socket.off('message_ack', onAck);
-      socket.off('message_edit', onEdit);
-      socket.off('message_revoke', onRevoke);
-      socket.off('ticket_event', onTicketEvent);
-      socket.off('history_sync_complete', onHistorySyncComplete);
-    };
-  }, [activeChat?._id, agent?._id, loadChats, loadWhatsAppStatus, syncChat]);
+  useChatSocketEvents({
+    activeChatId: activeChat?._id,
+    agent,
+    loadChats,
+    loadWhatsAppStatus,
+    setConnected,
+    setMessages,
+    setQr,
+    setServerAvailable,
+    setUnreadByChat,
+    showToast,
+    syncChat,
+  });
 
   useEffect(() => {
     if (!agent || tab !== 'dashboard') return undefined;

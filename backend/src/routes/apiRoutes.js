@@ -17,240 +17,23 @@ const ApiClient = require('../models/ApiClient');
 const AgentSession = require('../models/AgentSession');
 const AuditLog = require('../models/AuditLog');
 const { hashApiKey } = require('../middlewares/auth');
-const { rateLimit } = require('express-rate-limit');
+const { audit, auditMiddleware } = require('../middlewares/audit');
+const {
+  MIN_PASSWORD_LENGTH,
+  SESSION_DURATION_MS,
+  hashSessionToken,
+  publicAgent,
+  requireAdmin,
+  requireAgent,
+  requireManagedMessage,
+  requireManagedPanelSend,
+  requireManagedTicket,
+  setSessionCookie,
+  verifyPassword,
+} = require('../middlewares/agentAuth');
+const { externalSendLimiter, loginLimiter } = require('../middlewares/rateLimits');
 
-const SESSION_DURATION_MS = Math.min(
-  7 * 24 * 60 * 60 * 1000,
-  Math.max(60 * 60 * 1000, Number(process.env.SESSION_DURATION_HOURS || 12) * 60 * 60 * 1000),
-);
-const MIN_PASSWORD_LENGTH = 10;
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 5,
-  standardHeaders: 'draft-8',
-  legacyHeaders: false,
-  skipSuccessfulRequests: true,
-  message: { success: false, error: 'Muitas tentativas de login. Aguarde 15 minutos.' },
-});
-const externalSendLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  limit: 60,
-  standardHeaders: 'draft-8',
-  legacyHeaders: false,
-  message: { success: false, error: 'Limite de envios excedido. Tente novamente em instantes.' },
-});
-
-function hashSessionToken(token) {
-  return crypto.createHash('sha256').update(token).digest('hex');
-}
-
-function audit(req, action, options = {}) {
-  req.auditRecorded = true;
-  return AuditLog.create({
-    action,
-    actorId: req.agent?._id || options.actorId || null,
-    actorName: req.agent?.name || options.actorName || '',
-    actorType:
-      req.agent || options.actorId
-        ? 'agent'
-        : req.apiClient
-          ? 'api_client'
-          : options.actorType || 'anonymous',
-    targetType: options.targetType || '',
-    targetId: String(options.targetId || ''),
-    success: options.success !== false,
-    requestId: req.auditRequestId || '',
-    method: req.method || '',
-    path: req.originalUrl?.split('?')[0] || '',
-    statusCode: options.statusCode || (options.success === false ? 400 : 200),
-    durationMs: req.auditStartedAt ? Date.now() - req.auditStartedAt : 0,
-    ip: req.ip || '',
-    userAgent: req.get?.('user-agent') || '',
-    details: options.details || {},
-  }).catch((err) => console.error('[AUDITORIA]', err.message));
-}
-
-const SENSITIVE_AUDIT_FIELDS = /password|token|secret|authorization|cookie|api.?key|filebase64/i;
-const CONTENT_AUDIT_FIELDS = /^(message|body|caption)$/i;
-
-function sanitizeAuditValue(value, key = '', depth = 0) {
-  if (SENSITIVE_AUDIT_FIELDS.test(key)) return '[REDACTED]';
-  if (CONTENT_AUDIT_FIELDS.test(key)) return `[CONTENT REDACTED:${String(value || '').length}]`;
-  if (depth >= 3) return '[TRUNCATED]';
-  if (Array.isArray(value))
-    return value.slice(0, 50).map((item) => sanitizeAuditValue(item, key, depth + 1));
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value)
-        .slice(0, 50)
-        .map(([childKey, childValue]) => [
-          childKey,
-          sanitizeAuditValue(childValue, childKey, depth + 1),
-        ]),
-    );
-  }
-  if (typeof value === 'string') return value.slice(0, 500);
-  return value;
-}
-
-router.use((req, res, next) => {
-  if (req.path === '/health') return next();
-
-  const startedAt = Date.now();
-  req.auditStartedAt = startedAt;
-  req.auditRequestId = req.get('x-request-id') || crypto.randomUUID();
-  res.setHeader('X-Request-Id', req.auditRequestId);
-  res.once('finish', () => {
-    if (req.auditRecorded) return;
-    const routePath = req.route?.path || req.path;
-    const actorType = req.agent ? 'agent' : req.apiClient ? 'api_client' : 'anonymous';
-    AuditLog.create({
-      action: 'api.request',
-      actorId: req.agent?._id || null,
-      actorName: req.agent?.name || req.apiClient?.name || '',
-      actorType,
-      targetType: 'route',
-      targetId: `${req.method} ${routePath}`,
-      success: res.statusCode < 400,
-      requestId: req.auditRequestId,
-      method: req.method,
-      path: `${req.baseUrl || ''}${routePath}`,
-      statusCode: res.statusCode,
-      durationMs: Date.now() - startedAt,
-      ip: req.ip || '',
-      userAgent: req.get('user-agent') || '',
-      details: {
-        params: sanitizeAuditValue(req.params || {}),
-        query: sanitizeAuditValue(req.query || {}),
-        body: sanitizeAuditValue(req.body || {}),
-        file: req.file
-          ? { name: req.file.originalname, mimeType: req.file.mimetype, size: req.file.size }
-          : undefined,
-      },
-    }).catch((err) => console.error('[AUDITORIA]', err.message));
-  });
-  next();
-});
-
-function publicAgent(agent) {
-  return {
-    _id: agent._id,
-    name: agent.name,
-    corporateEmail: agent.corporateEmail,
-    role: agent.role || 'agent',
-    active: agent.active,
-  };
-}
-
-function verifyPassword(password, agent) {
-  const candidate = crypto.scryptSync(password, agent.passwordSalt, 64);
-  const saved = Buffer.from(agent.passwordHash, 'hex');
-  return candidate.length === saved.length && crypto.timingSafeEqual(candidate, saved);
-}
-
-async function requireAgent(req, res, next) {
-  try {
-    const cookieToken = String(req.headers.cookie || '')
-      .split(';')
-      .map((value) => value.trim())
-      .find((value) => value.startsWith('agent_session='))
-      ?.split('=')
-      .slice(1)
-      .join('=');
-    const token =
-      (req.headers.authorization || '').replace(/^Bearer\s+/i, '') ||
-      decodeURIComponent(cookieToken || '');
-    const tokenHash = token ? hashSessionToken(token) : '';
-    const session = tokenHash
-      ? await AgentSession.findOne({ tokenHash, expiresAt: { $gt: new Date() } })
-      : null;
-    if (!session) {
-      return res.status(401).json({ success: false, error: 'Sessao expirada. Entre novamente.' });
-    }
-    const agent = await Agent.findOne({ _id: session.agentId, active: true });
-    if (!agent)
-      return res.status(401).json({ success: false, error: 'Agente nao encontrado ou inativo.' });
-    req.agent = agent;
-    req.agentSessionId = session._id;
-    req.agentTokenHash = tokenHash;
-    res.cookie('agent_session', token, {
-      httpOnly: true,
-      sameSite: 'strict',
-      secure: process.env.NODE_ENV === 'production',
-      priority: 'high',
-      path: '/',
-      maxAge: SESSION_DURATION_MS,
-    });
-    next();
-  } catch (err) {
-    res.status(401).json({ success: false, error: 'Sessao invalida.' });
-  }
-}
-
-function requireAdmin(req, res, next) {
-  if (req.agent?.role !== 'admin')
-    return res
-      .status(403)
-      .json({ success: false, error: 'Somente administradores podem cadastrar agentes.' });
-  next();
-}
-
-function canManageChat(agent, chat) {
-  return (
-    agent?.role === 'admin' ||
-    (chat?.assignedAgent && String(chat.assignedAgent) === String(agent?._id || ''))
-  );
-}
-
-async function requireManagedMessage(req, res, next) {
-  try {
-    const message = await Message.findById(req.params.messageId).select('ticketId');
-    const chat = message ? await Chat.findById(message.ticketId).select('assignedAgent') : null;
-    if (!message || !chat)
-      return res.status(404).json({ success: false, error: 'Mensagem não encontrada.' });
-    if (!canManageChat(req.agent, chat))
-      return res
-        .status(403)
-        .json({ success: false, error: 'Atendimento atribuído a outro agente.' });
-    next();
-  } catch {
-    res.status(400).json({ success: false, error: 'Identificador de mensagem inválido.' });
-  }
-}
-
-async function requireManagedPanelSend(req, res, next) {
-  try {
-    const number = String(req.body?.number || '');
-    const digits = number.replace(/\D/g, '');
-    const chat = await Chat.findOne({
-      $or: [{ phoneNumber: digits }, { phoneNumber: number }, { whatsappId: number }],
-    }).select('assignedAgent');
-    if (!chat)
-      return res.status(404).json({ success: false, error: 'Atendimento não encontrado.' });
-    if (!canManageChat(req.agent, chat))
-      return res
-        .status(403)
-        .json({ success: false, error: 'Assuma o atendimento antes de enviar.' });
-    next();
-  } catch {
-    res.status(400).json({ success: false, error: 'Não foi possível validar o atendimento.' });
-  }
-}
-
-async function requireManagedTicket(req, res, next) {
-  try {
-    const chat = await Chat.findById(req.params.ticketId).select('assignedAgent');
-    if (!chat)
-      return res.status(404).json({ success: false, error: 'Atendimento não encontrado.' });
-    if (!canManageChat(req.agent, chat))
-      return res
-        .status(403)
-        .json({ success: false, error: 'Atendimento atribuído a outro agente.' });
-    next();
-  } catch {
-    res.status(400).json({ success: false, error: 'Identificador de atendimento inválido.' });
-  }
-}
+router.use(auditMiddleware);
 
 // --- ROTAS DE AUTENTICAÇÃO E QR CODE ---
 router.get('/health', (req, res) => res.json({ success: true, status: 'ok' }));
@@ -275,14 +58,7 @@ router.post('/auth/login', loginLimiter, async (req, res) => {
       expiresAt: new Date(Date.now() + SESSION_DURATION_MS),
     });
     await audit(req, 'auth.login', { actorId: agent._id, actorName: agent.name });
-    res.cookie('agent_session', token, {
-      httpOnly: true,
-      sameSite: 'strict',
-      secure: process.env.NODE_ENV === 'production',
-      priority: 'high',
-      path: '/',
-      maxAge: SESSION_DURATION_MS,
-    });
+    setSessionCookie(res, token);
     res.json({ success: true, data: publicAgent(agent) });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
