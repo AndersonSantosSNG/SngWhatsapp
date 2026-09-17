@@ -95,6 +95,14 @@ describe('ChatPanel', () => {
     expect(screen.getByRole('dialog', { name: 'Abrir chamado' })).toBeVisible();
   });
 
+  it('abre as informações do contato ao clicar no perfil', () => {
+    render(<ChatPanel {...baseProps} messages={[]} onSend={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Ver informações do contato' }));
+    expect(screen.getByRole('dialog', { name: 'Informações do contato' })).toBeVisible();
+    expect(screen.getAllByText('(11) 99999-9999')).toHaveLength(2);
+    expect(screen.getByText('5511999999999@c.us')).toBeVisible();
+  });
+
   it('rola até a mensagem citada e destaca a original', () => {
     const messages = [
       { _id: 'original', sender: 'client', body: 'Original' },

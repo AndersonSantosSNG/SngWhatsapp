@@ -1732,6 +1732,25 @@ async function getContactMetadata(number) {
     profilePicUrl = await getProfilePicUrl(whatsappId);
   } catch (err) {}
 
+  let about = '';
+  let formattedNumber = '';
+  let countryCode = '';
+  if (contact) {
+    try {
+      about = (await contact.getAbout()) || '';
+    } catch (err) {}
+    try {
+      formattedNumber = (await contact.getFormattedNumber()) || '';
+    } catch (err) {}
+    try {
+      countryCode = (await contact.getCountryCode()) || '';
+    } catch (err) {}
+  }
+  const businessProfile = contact?.businessProfile || {};
+  const categories = Array.isArray(businessProfile.categories)
+    ? businessProfile.categories.map((category) => category?.localized_display_name).filter(Boolean)
+    : [];
+
   const makeSerializable = (value) => {
     try {
       return JSON.parse(JSON.stringify(value));
@@ -1748,7 +1767,28 @@ async function getContactMetadata(number) {
   };
 
   console.dir({ event: 'NEW_CONVERSATION_WHATSAPP_PAYLOAD', payload: rawPayload }, { depth: null });
-  return { phoneNumber, whatsappId, name: contactName, contactName, profilePicUrl, rawPayload };
+  return {
+    phoneNumber,
+    formattedNumber,
+    countryCode,
+    whatsappId,
+    name: contactName,
+    contactName,
+    profilePicUrl,
+    about,
+    isBusiness: Boolean(contact?.isBusiness),
+    isEnterprise: Boolean(contact?.isEnterprise),
+    isMyContact: Boolean(contact?.isMyContact),
+    isBlocked: Boolean(contact?.isBlocked),
+    business: {
+      description: businessProfile.description || '',
+      categories,
+      email: businessProfile.email || '',
+      websites: Array.isArray(businessProfile.website) ? businessProfile.website : [],
+      address: businessProfile.address || '',
+    },
+    rawPayload,
+  };
 }
 
 function destroyClient() {

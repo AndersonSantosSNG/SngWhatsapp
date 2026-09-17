@@ -464,41 +464,65 @@ router.post('/tickets/start', requireAgent, async (req, res) => {
     }
 
     const contact = await whatsappService.getContactMetadata(phoneNumber);
-    const chat = await Chat.findOneAndUpdate(
-      { $or: [{ phoneNumber: contact.phoneNumber }, { whatsappId: contact.whatsappId }] },
-      {
-        $setOnInsert: {
-          isGroup: false,
-          isTemporary: true,
-          status: 'pending',
-          lastMessage: '',
-          lastMessageAt: null,
-        },
-        $set: {
-          phoneNumber: contact.phoneNumber,
-          whatsappId: contact.whatsappId,
-          contactName: contact.contactName,
-          ...(contact.profilePicUrl ? { profilePicUrl: contact.profilePicUrl } : {}),
-          updatedAt: new Date(),
-        },
-      },
-      { upsert: true, returnDocument: 'after' },
-    );
-
-    const hasMessages = await Message.exists({
-      ticketId: chat._id,
-      isInternalEvent: { $ne: true },
+    let chat = await Chat.findOne({
+      $or: [{ phoneNumber: contact.phoneNumber }, { whatsappId: contact.whatsappId }],
     });
-    chat.isTemporary = !hasMessages;
-    await chat.save();
+    if (chat) {
+      const hasMessages = await Message.exists({
+        ticketId: chat._id,
+        isInternalEvent: { $ne: true },
+      });
+      if (!hasMessages && chat.isTemporary) {
+        await Chat.deleteOne({ _id: chat._id });
+        chat = null;
+      }
+    }
+
+    if (chat) {
+      chat.phoneNumber = contact.phoneNumber;
+      chat.whatsappId = contact.whatsappId;
+      chat.contactName = contact.contactName;
+      if (contact.profilePicUrl) chat.profilePicUrl = contact.profilePicUrl;
+      chat.updatedAt = new Date();
+      await chat.save();
+    }
+
+    const conversation = chat?.toObject() || {
+      _id: `draft-${contact.phoneNumber}`,
+      phoneNumber: contact.phoneNumber,
+      whatsappId: contact.whatsappId,
+      contactName: contact.contactName,
+      profilePicUrl: contact.profilePicUrl || '',
+      isGroup: false,
+      isDraft: true,
+      status: 'pending',
+      lastMessage: '',
+      lastMessageAt: null,
+    };
 
     res.json({
       success: true,
-      data: { ...chat.toObject(), name: contact.name },
+      data: { ...conversation, name: contact.name },
       whatsappPayload: contact.rawPayload,
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/contacts/info', requireAgent, async (req, res) => {
+  try {
+    const phoneNumber = String(req.query.phoneNumber || '').replace(/\D/g, '');
+    if (phoneNumber.length < 10 || phoneNumber.length > 15) {
+      return res.status(400).json({ success: false, error: 'Número inválido.' });
+    }
+    const { rawPayload, ...contact } = await whatsappService.getContactMetadata(phoneNumber);
+    res.json({ success: true, data: contact });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err.message || 'Não foi possível consultar o perfil do contato.',
+    });
   }
 });
 
@@ -617,6 +641,31 @@ router.get('/tickets/:ticketId/profile-picture', requireAgent, async (req, res) 
     res.type(picture.contentType).send(picture.buffer);
   } catch (err) {
     res.status(404).end();
+  }
+});
+
+router.get('/tickets/:ticketId/contact-info', requireAgent, async (req, res) => {
+  try {
+    const chat = await Chat.findById(req.params.ticketId);
+    if (!chat || chat.isGroup) {
+      return res.status(404).json({ success: false, error: 'Contato não encontrado.' });
+    }
+
+    const contact = await whatsappService.getContactMetadata(chat.phoneNumber);
+    if (contact.contactName && contact.contactName !== contact.phoneNumber) {
+      chat.contactName = contact.contactName;
+    }
+    chat.whatsappId = contact.whatsappId || chat.whatsappId;
+    if (contact.profilePicUrl) chat.profilePicUrl = contact.profilePicUrl;
+    await chat.save();
+
+    const { rawPayload, ...publicContact } = contact;
+    res.json({ success: true, data: publicContact });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err.message || 'Não foi possível consultar o perfil do contato.',
+    });
   }
 });
 

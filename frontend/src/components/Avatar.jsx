@@ -27,6 +27,10 @@ export default function Avatar({ chat, large = false }) {
   const [photo, setPhoto] = useState('');
   useEffect(() => {
     setPhoto('');
+    if (conversation.isDraft && conversation.profilePicUrl) {
+      setPhoto(conversation.profilePicUrl);
+      return undefined;
+    }
     if (!conversation._id) return undefined;
     const controller = new AbortController();
     let objectUrl = '';
@@ -49,7 +53,7 @@ export default function Avatar({ chat, large = false }) {
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [conversation._id, conversation.updatedAt]);
+  }, [conversation._id, conversation.updatedAt, conversation.isDraft, conversation.profilePicUrl]);
   return (
     <div className={`avatar ${large ? 'avatar-large' : ''}`} style={{ '--avatar-color': color }}>
       {!photo && <i className={`fa-solid ${conversation.isGroup ? 'fa-users' : 'fa-user'}`} />}

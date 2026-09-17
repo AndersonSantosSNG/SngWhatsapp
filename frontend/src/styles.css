@@ -3081,16 +3081,104 @@ body[data-theme='light'] .composer-feedback.error {
   border-color: #fecdd3;
 }
 
-.group-profile-button {
+.group-profile-button,
+.contact-profile-button {
   padding: 0;
   border: 0;
   border-radius: 50%;
   background: transparent;
   flex: none;
 }
-.group-profile-button:focus-visible {
+.group-profile-button:focus-visible,
+.contact-profile-button:focus-visible {
   outline: 2px solid #34d399;
   outline-offset: 3px;
+}
+.contact-info-dialog {
+  color: #e2e8f0;
+  width: min(430px, calc(100vw - 28px));
+}
+.contact-info-dialog::backdrop {
+  background: rgba(2, 6, 23, 0.75);
+  backdrop-filter: blur(5px);
+}
+.contact-info-dialog header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.contact-info-dialog h2 {
+  margin: 0;
+  font-size: 19px;
+}
+.contact-info-dialog header button {
+  border: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #334155;
+  color: inherit;
+}
+.contact-info-profile {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 22px 0;
+}
+.contact-info-profile .avatar {
+  width: 64px;
+  height: 64px;
+}
+.contact-info-profile > div {
+  display: grid;
+  gap: 6px;
+}
+.contact-info-profile strong {
+  font-size: 18px;
+}
+.contact-info-profile span {
+  color: #94a3b8;
+  font-size: 13px;
+}
+.contact-info-dialog dl {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  margin: 0;
+  border-radius: 10px;
+  background: #334155;
+}
+.contact-info-dialog dl div {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  background: #1e293b;
+}
+.contact-info-dialog dt {
+  color: #94a3b8;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.contact-info-dialog dd {
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+.contact-info-state {
+  margin: 14px 0 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+.contact-info-state.error {
+  color: #fb7185;
+}
+body[data-theme='light'] .contact-info-dialog {
+  color: #0f172a;
+}
+body[data-theme='light'] .contact-info-dialog dl {
+  background: #cbd5e1;
+}
+body[data-theme='light'] .contact-info-dialog dl div {
+  background: #f8fafc;
 }
 .group-members-dialog {
   color: #e2e8f0;

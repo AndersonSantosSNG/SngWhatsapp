@@ -102,6 +102,10 @@ export default function App() {
     }
   }, []);
   const discardTemporaryChat = async (ticket) => {
+    if (ticket?.isDraft) {
+      setChats((current) => current.filter((item) => item._id !== ticket._id));
+      return true;
+    }
     if (!ticket?.isTemporary) return false;
     try {
       const result = await api('/tickets/discard-temporary', {
@@ -128,6 +132,10 @@ export default function App() {
       delete next[ticket._id];
       return next;
     });
+    if (ticket.isDraft) {
+      setHasOlderMessages(false);
+      return;
+    }
     const result = await api(`/tickets/${ticket._id}/messages?limit=100`);
     setMessages(
       result.data.map((message) => ({
@@ -220,11 +228,13 @@ export default function App() {
   }, [initializing, serverAvailable, agent]);
 
   useChatSocketEvents({
+    activeChat,
     activeChatId: activeChat?._id,
     agent,
     loadChats,
     loadWhatsAppStatus,
     setConnected,
+    setActiveChat,
     setMessages,
     setQr,
     setServerAvailable,

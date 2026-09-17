@@ -3,11 +3,13 @@ import notificationSound from '../assets/notification.mp3';
 import { socket } from '../services/socket';
 
 export function useChatSocketEvents({
+  activeChat,
   activeChatId,
   agent,
   loadChats,
   loadWhatsAppStatus,
   setConnected,
+  setActiveChat,
   setMessages,
   setQr,
   setServerAvailable,
@@ -35,10 +37,15 @@ export function useChatSocketEvents({
     };
     const onMessage = (data) => {
       const message = data.message || data;
+      const replacesDraft =
+        activeChat?.isDraft &&
+        String(activeChat.phoneNumber || '') ===
+          String(message.phoneNumber || data.chat?.phoneNumber || '');
       setConnected(true);
       if (data.chat) syncChat(data.chat);
       else loadChats({ showLoading: false }).catch(console.error);
-      if (activeChatId === message.ticketId) {
+      if (replacesDraft && data.chat) setActiveChat(data.chat);
+      if (activeChatId === message.ticketId || replacesDraft) {
         setMessages((current) =>
           current.some((item) => (item.id || item._id) === message.id)
             ? current
@@ -114,10 +121,12 @@ export function useChatSocketEvents({
     };
   }, [
     activeChatId,
+    activeChat,
     agent,
     loadChats,
     loadWhatsAppStatus,
     setConnected,
+    setActiveChat,
     setMessages,
     setQr,
     setServerAvailable,

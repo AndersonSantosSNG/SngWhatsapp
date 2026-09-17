@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import Avatar from './Avatar';
 import GroupMembersDialog from './GroupMembersDialog';
+import ContactInfoDialog from './ContactInfoDialog';
 import CloseChatDialog from './CloseChatDialog';
 import OpenGlpiTicketDialog from './OpenGlpiTicketDialog';
 import DeleteMessageDialog from './DeleteMessageDialog';
@@ -29,6 +30,8 @@ export default function ChatPanel({
   const [text, setText] = useState('');
   const [membersTicketId, setMembersTicketId] = useState(null);
   useEffect(() => setMembersTicketId(null), [chat?._id]);
+  const [contactInfoTicketId, setContactInfoTicketId] = useState(null);
+  useEffect(() => setContactInfoTicketId(null), [chat?._id]);
   const [closingTicketId, setClosingTicketId] = useState(null);
   useEffect(() => setClosingTicketId(null), [chat?._id]);
   const [glpiTicketId, setGlpiTicketId] = useState(null);
@@ -190,6 +193,14 @@ export default function ChatPanel({
       {chat.isGroup && membersTicketId === chat._id && (
         <GroupMembersDialog key={chat._id} chat={chat} onClose={() => setMembersTicketId(null)} />
       )}
+      {!chat.isGroup && contactInfoTicketId === chat._id && (
+        <ContactInfoDialog
+          key={chat._id}
+          chat={chat}
+          contactOnline={contactOnline}
+          onClose={() => setContactInfoTicketId(null)}
+        />
+      )}
       {closingTicketId === chat._id && (
         <CloseChatDialog
           key={chat._id}
@@ -235,7 +246,15 @@ export default function ChatPanel({
               <Avatar chat={chat} />
             </button>
           ) : (
-            <Avatar chat={chat} />
+            <button
+              type="button"
+              className="contact-profile-button"
+              onClick={() => setContactInfoTicketId(chat._id)}
+              title="Ver informações do contato"
+              aria-label="Ver informações do contato"
+            >
+              <Avatar chat={chat} />
+            </button>
           )}
           <div>
             <span className="chat-title-line">
