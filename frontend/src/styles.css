@@ -1920,6 +1920,46 @@ body[data-theme='light'] .card {
   background: white;
   border-color: #cbd5e1;
 }
+body[data-theme='light'] .chat-actions .secondary {
+  color: #047857;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+}
+body[data-theme='light'] .chat-actions .secondary:hover {
+  background: #d1fae5;
+}
+body[data-theme='light'] .chat-actions .primary,
+body[data-theme='light'] .composer button {
+  color: white;
+  background: #059669;
+}
+body[data-theme='light'] .chat-actions .primary:hover,
+body[data-theme='light'] .composer button:hover {
+  background: #047857;
+}
+body[data-theme='light'] .chat-actions .warning {
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+}
+body[data-theme='light'] .chat-actions .warning:hover {
+  background: #fde68a;
+}
+body[data-theme='light'] .chat-actions .danger {
+  color: #be123c;
+  background: #fff1f2;
+  border: 1px solid #fda4af;
+}
+body[data-theme='light'] .chat-actions .danger:hover {
+  background: #ffe4e6;
+}
+body[data-theme='light'] .chat-actions .close-view {
+  color: #475569;
+  background: #e2e8f0;
+}
+body[data-theme='light'] .chat-actions .close-view:hover {
+  background: #cbd5e1;
+}
 body[data-theme='light'] .sidebar-brand,
 body[data-theme='light'] .sidebar footer,
 body[data-theme='light'] .chat-column > header,
