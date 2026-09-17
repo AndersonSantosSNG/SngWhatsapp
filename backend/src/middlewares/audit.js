@@ -58,34 +58,6 @@ function auditMiddleware(req, res, next) {
   req.auditStartedAt = startedAt;
   req.auditRequestId = String(req.get('x-request-id') || crypto.randomUUID()).slice(0, 128);
   res.setHeader('X-Request-Id', req.auditRequestId);
-  res.once('finish', () => {
-    if (req.auditRecorded) return;
-    const routePath = req.route?.path || req.path;
-    AuditLog.create({
-      action: 'api.request',
-      actorId: req.agent?._id || null,
-      actorName: req.agent?.name || req.apiClient?.name || '',
-      actorType: req.agent ? 'agent' : req.apiClient ? 'api_client' : 'anonymous',
-      targetType: 'route',
-      targetId: `${req.method} ${routePath}`,
-      success: res.statusCode < 400,
-      requestId: req.auditRequestId,
-      method: req.method,
-      path: `${req.baseUrl || ''}${routePath}`,
-      statusCode: res.statusCode,
-      durationMs: Date.now() - startedAt,
-      ip: req.ip || '',
-      userAgent: req.get('user-agent') || '',
-      details: {
-        params: sanitizeAuditValue(req.params || {}),
-        query: sanitizeAuditValue(req.query || {}),
-        body: sanitizeAuditValue(req.body || {}),
-        file: req.file
-          ? { name: req.file.originalname, mimeType: req.file.mimetype, size: req.file.size }
-          : undefined,
-      },
-    }).catch((err) => console.error('[AUDITORIA]', err.message));
-  });
   next();
 }
 

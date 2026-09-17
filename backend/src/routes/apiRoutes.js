@@ -896,6 +896,11 @@ router.delete('/database/clear', requireAgent, requireAdmin, async (req, res) =>
   try {
     await Chat.deleteMany({});
     await Message.deleteMany({});
+    await audit(req, 'database.clear', {
+      targetType: 'database',
+      targetId: 'all',
+      details: { collections: ['Chat', 'Message'] },
+    });
     res.json({
       success: true,
       message: 'Banco de dados limpo com sucesso! Todos os tickets e mensagens foram removidos.',

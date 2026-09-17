@@ -1,4 +1,5 @@
 const whatsappService = require('../services/whatsappService');
+const { audit } = require('../middlewares/audit');
 const dns = require('dns').promises;
 
 const BLOCKED_UPLOAD_MIME =
@@ -73,6 +74,17 @@ const handleSendMessage = async (req, res) => {
       replyToMessageId,
       sendAudioAsVoice,
       isClosingMessage,
+    });
+
+    await audit(req, 'message.send', {
+      targetType: 'chat',
+      targetId: String(number),
+      details: {
+        number,
+        replyToMessageId: replyToMessageId || '',
+        hasAttachment: Boolean(file || fileUrl || fileBase64),
+        agentId: agentId || req.agent?._id?.toString() || '',
+      },
     });
 
     return res.json({

@@ -89,6 +89,25 @@ describe('autenticação e autorização', () => {
     expect(await AuditLog.countDocuments({ action: 'auth.login_failed', success: false })).toBe(1);
   });
 
+  it('não cria auditoria genérica para GETs e preserva ações relevantes', async () => {
+    const admin = await createAgent('admin@sng.com.br', 'admin');
+    const { authorization } = await login(admin.corporateEmail);
+
+    await request(app).get('/api/auth/me').set('Authorization', authorization).expect(200);
+    await request(app).get('/api/tickets').set('Authorization', authorization).expect(200);
+
+    expect(await AuditLog.countDocuments({ action: 'api.request' })).toBe(0);
+
+    const created = await request(app)
+      .post('/api/api-clients')
+      .set('Authorization', authorization)
+      .send({ name: 'Site de teste', url: 'https://example.com' })
+      .expect(201);
+
+    expect(created.body.success).toBe(true);
+    expect(await AuditLog.countDocuments({ action: 'api_client.create' })).toBe(1);
+  });
+
   it('impede agente comum de acessar recursos administrativos', async () => {
     await createAgent('agent@sng.com.br');
     const { authorization } = await login('agent@sng.com.br');
