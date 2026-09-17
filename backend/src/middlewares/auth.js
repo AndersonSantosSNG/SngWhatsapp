@@ -17,8 +17,20 @@ const checkApiKey = async (req, res, next) => {
   try {
     const apiKey = String(req.headers['x-api-key'] || '');
     if (!apiKey) return res.status(401).json({ error: 'Chave de API ausente.' });
-    if (process.env.API_SECRET_KEY && safeEqual(apiKey, process.env.API_SECRET_KEY)) {
+    if (
+      process.env.ALLOW_LEGACY_MASTER_KEY !== 'false' &&
+      process.env.API_SECRET_KEY &&
+      safeEqual(apiKey, process.env.API_SECRET_KEY)
+    ) {
       req.apiClient = { name: 'legacy-master-key' };
+      console.warn(
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          level: 'warn',
+          event: 'legacy_master_key_used',
+          ip: req.ip,
+        }),
+      );
       return next();
     }
 

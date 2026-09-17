@@ -1,4 +1,4 @@
-const { rateLimit } = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -14,6 +14,8 @@ const externalSendLimiter = rateLimit({
   limit: 60,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
+  keyGenerator: (req) =>
+    req.apiClient?._id?.toString() || req.apiClient?.name || ipKeyGenerator(req.ip),
   message: { success: false, error: 'Limite de envios excedido. Tente novamente em instantes.' },
 });
 

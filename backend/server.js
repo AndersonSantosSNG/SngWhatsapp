@@ -14,6 +14,7 @@ const { httpCorsOptions, socketCorsOrigin } = require('./src/config/cors');
 const connectDB = require('./src/config/database');
 
 const apiRoutes = require('./src/routes/apiRoutes');
+const healthRoutes = require('./src/routes/healthRoutes');
 const { initWhatsApp, destroyClient, getStatus } = require('./src/services/whatsappService');
 
 // Inicializa a conexão com o Banco de Dados
@@ -34,6 +35,7 @@ const io = new Server(server, {
 
 // Middlewares
 app.disable('x-powered-by');
+app.use('/api/health', healthRoutes);
 app.use(
   helmet({
     contentSecurityPolicy: {

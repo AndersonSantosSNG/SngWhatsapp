@@ -1,4 +1,6 @@
 const whatsappService = require('../services/whatsappService');
+const messageService = require('../services/messageService');
+const { validateUploadedFile } = require('../services/fileValidation');
 const { audit } = require('../middlewares/audit');
 const dns = require('dns').promises;
 
@@ -58,23 +60,27 @@ const handleSendMessage = async (req, res) => {
     if (BLOCKED_UPLOAD_MIME.test(String(file?.mimetype || mimeType || ''))) {
       throw new Error('Este tipo de arquivo não é permitido.');
     }
+    validateUploadedFile(file);
     if (fileBase64 && Buffer.byteLength(fileBase64, 'base64') > 15 * 1024 * 1024) {
       throw new Error('O arquivo excede o limite de 15 MB.');
     }
     await validateRemoteFileUrl(fileUrl);
-    await whatsappService.sendMessage({
-      number,
-      message,
-      file,
-      fileUrl,
-      fileBase64,
-      mimeType,
-      fileName,
-      agentId,
-      replyToMessageId,
-      sendAudioAsVoice,
-      isClosingMessage,
-    });
+    const delivery = await messageService.sendMessage(
+      {
+        number,
+        message,
+        file,
+        fileUrl,
+        fileBase64,
+        mimeType,
+        fileName,
+        agentId,
+        replyToMessageId,
+        sendAudioAsVoice,
+        isClosingMessage,
+      },
+      req.get('Idempotency-Key') || req.body.idempotencyKey,
+    );
 
     await audit(req, 'message.send', {
       targetType: 'chat',
@@ -89,12 +95,17 @@ const handleSendMessage = async (req, res) => {
 
     return res.json({
       status: 'success',
-      message: 'Mensagem adicionada à fila de envio com sucesso.',
+      message: delivery.duplicate
+        ? 'Esta requisição já foi processada anteriormente.'
+        : 'Mensagem adicionada à fila de envio com sucesso.',
+      idempotencyKey: delivery.idempotencyKey,
+      deliveryStatus: delivery.status,
+      duplicate: delivery.duplicate,
     });
   } catch (err) {
     console.error('Erro no controller de envio:', err);
     return res
-      .status(500)
+      .status(err.statusCode || 500)
       .json({ error: 'Falha ao processar requisição', details: err.toString() });
   }
 };

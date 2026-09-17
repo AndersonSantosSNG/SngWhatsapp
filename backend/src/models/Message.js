@@ -4,6 +4,14 @@ const MessageSchema = new mongoose.Schema({
   ticketId: { type: mongoose.Schema.Types.ObjectId, ref: 'Chat', required: true },
   phoneNumber: { type: String, required: true },
   whatsappMessageId: { type: String, default: '', index: true },
+  idempotencyKey: { type: String, default: null },
+  deliveryStatus: {
+    type: String,
+    enum: ['received', 'pending', 'sent', 'failed'],
+    default: 'received',
+  },
+  retryCount: { type: Number, default: 0 },
+  lastDeliveryError: { type: String, default: '' },
   sender: { type: String, enum: ['client', 'agent'], required: true },
   groupSenderId: { type: String, default: '' },
   groupSenderName: { type: String, default: '' },
@@ -43,5 +51,9 @@ const MessageSchema = new mongoose.Schema({
 
 MessageSchema.index({ ticketId: 1, timestamp: -1 });
 MessageSchema.index({ phoneNumber: 1, timestamp: -1 });
+MessageSchema.index(
+  { idempotencyKey: 1 },
+  { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } },
+);
 
 module.exports = mongoose.model('Message', MessageSchema);

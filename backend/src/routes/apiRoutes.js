@@ -32,6 +32,8 @@ const {
   verifyPassword,
 } = require('../middlewares/agentAuth');
 const { externalSendLimiter, loginLimiter } = require('../middlewares/rateLimits');
+const ticketService = require('../services/ticketService');
+const metrics = require('../services/metricsService');
 
 router.use(auditMiddleware);
 
@@ -286,8 +288,8 @@ router.get('/audit-logs', requireAgent, requireAdmin, async (req, res) => {
 
 router.post(
   '/send-message',
-  externalSendLimiter,
   checkApiKey,
+  externalSendLimiter,
   upload.single('file'),
   messageController.handleSendMessage,
 );
@@ -336,84 +338,15 @@ router.post('/whatsapp/sync-history', requireAgent, requireAdmin, async (req, re
 // --- ROTAS DO PAINEL INTERNO ---
 
 router.get('/tickets', requireAgent, async (req, res) => {
+  const startedAt = Date.now();
   try {
-    const { status } = req.query;
-    const filter = status ? { status } : {};
-    const tickets = await Chat.find(filter).sort({ lastMessageAt: -1, updatedAt: -1 });
-
-    if (tickets.length) {
-      const latestMessages = await Message.aggregate([
-        {
-          $match: {
-            ticketId: { $in: tickets.map((chat) => chat._id) },
-            $or: [{ isInternalEvent: { $ne: true } }, { internalAction: /^call_/ }],
-          },
-        },
-        { $sort: { timestamp: -1 } },
-        {
-          $group: {
-            _id: '$ticketId',
-            lastMessageAt: { $first: '$timestamp' },
-            lastMessage: { $first: '$body' },
-          },
-        },
-      ]);
-      const latestByChat = new Map(latestMessages.map((item) => [item._id.toString(), item]));
-      const updates = [];
-      for (const chat of tickets) {
-        const latest = latestByChat.get(chat._id.toString());
-        if (!latest?.lastMessageAt) continue;
-        const timestampChanged =
-          new Date(chat.lastMessageAt || 0).getTime() !== new Date(latest.lastMessageAt).getTime();
-        const bodyChanged = chat.lastMessage !== latest.lastMessage;
-        chat.lastMessageAt = latest.lastMessageAt;
-        chat.lastMessage = latest.lastMessage;
-        if (timestampChanged || bodyChanged)
-          updates.push({
-            updateOne: {
-              filter: { _id: chat._id },
-              update: {
-                $set: { lastMessageAt: latest.lastMessageAt, lastMessage: latest.lastMessage },
-              },
-            },
-          });
-      }
-      if (updates.length) await Chat.bulkWrite(updates);
-    }
-
-    const genericGroupNames = new Set(['', 'Grupo', 'Grupo sem nome', 'Grupo do WhatsApp']);
-    await Promise.all(
-      tickets.map(async (chat) => {
-        const plainId = (chat.phoneNumber || '').replace(/\D/g, '');
-        const looksLikeGroupId = plainId.startsWith('120363') && plainId.length >= 17;
-        const needsGroupRepair = chat.isGroup
-          ? genericGroupNames.has((chat.contactName || '').trim())
-          : looksLikeGroupId;
-
-        if (!needsGroupRepair) return;
-
-        const savedId = chat.whatsappId || chat.phoneNumber;
-        const groupId = savedId.includes('@g.us') ? savedId : `${plainId}@g.us`;
-
-        const metadata = await whatsappService.getChatMetadata(groupId);
-        if (!metadata?.name) return;
-
-        chat.contactName = metadata.name;
-        chat.whatsappId = metadata.id || groupId;
-        chat.isGroup = true;
-        if (metadata.profilePicUrl) chat.profilePicUrl = metadata.profilePicUrl;
-        await chat.save();
-      }),
-    );
-
-    tickets.sort(
-      (a, b) =>
-        new Date(b.lastMessageAt || b.updatedAt || 0) -
-        new Date(a.lastMessageAt || a.updatedAt || 0),
-    );
-    res.json({ success: true, data: tickets });
+    const result = await ticketService.listTickets(req.query);
+    res.json({ success: true, ...result });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
+  } finally {
+    metrics.increment('ticket_list_requests_total');
+    metrics.gauge('ticket_list_latency_ms', Date.now() - startedAt);
   }
 });
 

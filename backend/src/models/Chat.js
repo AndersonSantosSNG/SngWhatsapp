@@ -19,5 +19,7 @@ const ChatSchema = new mongoose.Schema(
 
 ChatSchema.index({ status: 1, updatedAt: -1 });
 ChatSchema.index({ assignedAgent: 1, updatedAt: -1 });
+ChatSchema.index({ status: 1, lastMessageAt: -1, _id: -1 });
+ChatSchema.index({ status: 1, updatedAt: -1, _id: -1 });
 
 module.exports = mongoose.models.Chat || mongoose.model('Chat', ChatSchema);
