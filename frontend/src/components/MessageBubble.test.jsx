@@ -3,6 +3,23 @@ import { describe, expect, it, vi } from 'vitest';
 import MessageBubble from './MessageBubble';
 
 describe('MessageBubble', () => {
+  it('marca visualmente mensagens enviadas pela API', () => {
+    render(
+      <MessageBubble
+        message={{
+          _id: 'api-message',
+          sender: 'agent',
+          source: 'api',
+          apiClientOrigin: 'https://integracao.exemplo.com',
+          body: 'Mensagem automática',
+        }}
+      />,
+    );
+    expect(screen.getByText('API')).toHaveAttribute(
+      'title',
+      'Enviada pela API: https://integracao.exemplo.com',
+    );
+  });
   it('copia o texto pelo menu da mensagem', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {

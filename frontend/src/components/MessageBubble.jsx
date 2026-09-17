@@ -347,6 +347,19 @@ export default function MessageBubble({
         {isGroup && !fromMe && groupSender && (
           <strong className="group-sender">{groupSender}</strong>
         )}
+        {message.source === 'api' && (
+          <span
+            className="api-message-badge"
+            title={
+              message.apiClientOrigin
+                ? `Enviada pela API: ${message.apiClientOrigin}`
+                : 'Enviada por uma integração da API'
+            }
+          >
+            <i className="fa-solid fa-code" />
+            API
+          </span>
+        )}
         <MessageMedia message={message} onImage={onImage} />
         {body && !(message.mediaUrl && placeholder) && (
           <p>

@@ -3797,15 +3797,105 @@ body[data-theme='light'] .group-members-dialog em {
     font-size: 11px;
   }
 }
-.settings-checkbox {
+.api-clients-heading {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  cursor: pointer;
+  justify-content: space-between;
+  gap: 24px;
 }
 
-.settings-checkbox input {
-  width: 1.15rem;
-  height: 1.15rem;
-  accent-color: var(--accent);
+.api-clients-heading .form-heading {
+  margin: 0;
+}
+
+.api-visibility-switch {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.api-visibility-switch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.switch-track {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  flex: none;
+  border: 1px solid #475569;
+  border-radius: 999px;
+  background: #0f172a;
+  transition: 0.2s ease;
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #94a3b8;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  transition: 0.2s ease;
+}
+
+.api-visibility-switch input:checked + .switch-track {
+  border-color: #10b981;
+  background: rgba(16, 185, 129, 0.28);
+}
+
+.api-visibility-switch input:checked + .switch-track .switch-thumb {
+  transform: translateX(20px);
+  background: #34d399;
+}
+
+.api-visibility-switch input:focus-visible + .switch-track {
+  outline: 2px solid #60a5fa;
+  outline-offset: 3px;
+}
+
+.api-message-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  margin: 0 0 5px;
+  padding: 2px 6px;
+  border: 1px solid rgba(110, 231, 183, 0.42);
+  border-radius: 999px;
+  color: #a7f3d0;
+  background: rgba(6, 78, 59, 0.48);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+body[data-theme='light'] .api-message-badge {
+  border-color: rgba(5, 150, 105, 0.3);
+  color: #047857;
+  background: rgba(167, 243, 208, 0.52);
+}
+
+@media (max-width: 720px) {
+  .api-clients-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .api-visibility-switch {
+    width: 100%;
+    justify-content: space-between;
+  }
 }

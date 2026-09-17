@@ -177,22 +177,6 @@ export default function Settings({ agent, onAgentChange }) {
           </button>
         </form>
         {adminAccess && (
-          <section className="card form-card">
-            <div className="form-heading">
-              <h2>Visualização de mensagens</h2>
-              <p>Controle a exibição das mensagens enviadas por integrações com chave de API.</p>
-            </div>
-            <label className="settings-checkbox">
-              <input
-                type="checkbox"
-                checked={agent.showApiMessages === true}
-                onChange={changeApiMessageVisibility}
-              />
-              Visualizar mensagens enviadas pela API
-            </label>
-          </section>
-        )}
-        {adminAccess && (
           <form className="card form-card" onSubmit={create}>
             <div className="form-heading">
               <h2>Novo agente</h2>
@@ -311,9 +295,22 @@ export default function Settings({ agent, onAgentChange }) {
       )}
       {adminAccess && (
         <section className="card agents-card api-clients-card">
-          <div className="form-heading">
-            <h2>Integrações da API</h2>
-            <p>Cada chave só pode ser usada pelo site associado quando enviada pelo navegador.</p>
+          <div className="api-clients-heading">
+            <div className="form-heading">
+              <h2>Integrações da API</h2>
+              <p>Cada chave só pode ser usada pelo site associado quando enviada pelo navegador.</p>
+            </div>
+            <label className="api-visibility-switch">
+              <span className="switch-label">Visualizar mensagens da API</span>
+              <input
+                type="checkbox"
+                checked={agent.showApiMessages === true}
+                onChange={changeApiMessageVisibility}
+              />
+              <span className="switch-track" aria-hidden="true">
+                <span className="switch-thumb" />
+              </span>
+            </label>
           </div>
           {!apiClients.length && <p>Nenhuma integração cadastrada.</p>}
           {apiClients.map((item) => (
