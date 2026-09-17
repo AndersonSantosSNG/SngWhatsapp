@@ -1960,6 +1960,34 @@ body[data-theme='light'] .chat-actions .close-view {
 body[data-theme='light'] .chat-actions .close-view:hover {
   background: #cbd5e1;
 }
+body[data-theme='light'] .reply-message-button,
+body[data-theme='light'] .message-menu-button {
+  color: #475569;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #cbd5e1;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12);
+}
+body[data-theme='light'] .reply-message-button:hover,
+body[data-theme='light'] .message-menu-button:hover {
+  color: #047857;
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+}
+body[data-theme='light'] .contact-info-dialog header button {
+  color: #475569;
+  background: #e2e8f0;
+}
+body[data-theme='light'] .contact-info-dialog header button:hover {
+  background: #cbd5e1;
+}
+body[data-theme='light'] .audit-heading button {
+  color: white;
+  background: #059669;
+  border-color: #047857;
+}
+body[data-theme='light'] .audit-heading button:hover {
+  background: #047857;
+}
 body[data-theme='light'] .sidebar-brand,
 body[data-theme='light'] .sidebar footer,
 body[data-theme='light'] .chat-column > header,
