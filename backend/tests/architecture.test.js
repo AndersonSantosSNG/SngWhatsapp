@@ -4,6 +4,8 @@ const Chat = require('../src/models/Chat');
 const { listTickets, decodeCursor } = require('../src/services/ticketService');
 const { looksDangerous, validateUploadedFile } = require('../src/services/fileValidation');
 const { normalizeKey } = require('../src/services/messageService');
+const AuditLog = require('../src/models/AuditLog');
+const { audit } = require('../src/middlewares/audit');
 
 let mongo;
 
@@ -54,5 +56,27 @@ describe('seguranca de upload e idempotencia', () => {
     ).not.toThrow();
     expect(normalizeKey('cliente:pedido-123')).toBe('cliente:pedido-123');
     expect(() => normalizeKey('chave com espaco')).toThrow(/idempotencia/i);
+  });
+});
+
+describe('auditoria de integracoes', () => {
+  it('identifica o envio externo pela URL autorizada do API Client', async () => {
+    await audit(
+      {
+        apiClient: {
+          name: 'Integracao comercial',
+          allowedOrigin: 'https://integracao.exemplo.com',
+        },
+        method: 'POST',
+        originalUrl: '/api/send-message',
+        ip: '127.0.0.1',
+        get: () => '',
+      },
+      'message.send',
+    );
+
+    const entry = await AuditLog.findOne({ action: 'message.send' }).lean();
+    expect(entry.actorType).toBe('api_client');
+    expect(entry.actorName).toBe('https://integracao.exemplo.com');
   });
 });

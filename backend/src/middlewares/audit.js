@@ -27,10 +27,17 @@ function sanitizeAuditValue(value, key = '', depth = 0) {
 
 function audit(req, action, options = {}) {
   req.auditRecorded = true;
+  const apiClientOrigin = String(req.apiClient?.allowedOrigin || '').trim();
+  const apiClientName = String(req.apiClient?.name || '').trim();
+  const actorName =
+    req.agent?.name ||
+    options.actorName ||
+    apiClientOrigin ||
+    (req.apiClient ? apiClientName || 'API externa' : '');
   return AuditLog.create({
     action,
     actorId: req.agent?._id || options.actorId || null,
-    actorName: req.agent?.name || options.actorName || '',
+    actorName,
     actorType:
       req.agent || options.actorId
         ? 'agent'
