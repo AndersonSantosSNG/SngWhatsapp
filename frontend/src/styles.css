@@ -1302,6 +1302,9 @@ body[data-theme='light'] .chat-sort-menu > div button.active {
   color: #cbd5e1;
   background: transparent;
 }
+.composer label {
+  cursor: pointer;
+}
 .composer button {
   color: white;
   background: #059669;
@@ -2013,6 +2016,40 @@ body[data-theme='light'] .new-conversation-card textarea {
 body[data-theme='light'] .new-conversation-title h2,
 body[data-theme='light'] .new-conversation-card label {
   color: #1e293b;
+}
+body[data-theme='light'] .new-conversation-title p,
+body[data-theme='light'] .logout-confirm-card p {
+  color: #94a3b8;
+}
+body[data-theme='light'] .new-conversation-actions button,
+body[data-theme='light'] .logout-confirm-actions button {
+  color: #475569;
+  background: #e2e8f0;
+  border: 1px solid #cbd5e1;
+}
+body[data-theme='light'] .new-conversation-actions button:hover,
+body[data-theme='light'] .logout-confirm-actions button:hover {
+  background: #cbd5e1;
+}
+body[data-theme='light'] .new-conversation-actions .submit-button {
+  color: white;
+  background: #059669;
+  border-color: #047857;
+}
+body[data-theme='light'] .new-conversation-actions .submit-button:hover {
+  background: #047857;
+}
+body[data-theme='light'] .logout-confirm-card > i {
+  color: #e11d48;
+  background: #ffe4e6;
+}
+body[data-theme='light'] .logout-confirm-actions .danger {
+  color: white;
+  background: #e11d48;
+  border-color: #be123c;
+}
+body[data-theme='light'] .logout-confirm-actions .danger:hover {
+  background: #be123c;
 }
 body[data-theme='light'] .sidebar-brand button:hover {
   color: #059669;
