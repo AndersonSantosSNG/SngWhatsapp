@@ -125,6 +125,23 @@ export default function Settings({ agent, onAgentChange }) {
       setFeedback('Não foi possível copiar automaticamente. Selecione a chave abaixo.');
     }
   };
+  const changeApiMessageVisibility = async (event) => {
+    const showApiMessages = event.target.checked;
+    try {
+      const result = await api('/auth/preferences', {
+        method: 'PATCH',
+        body: JSON.stringify({ showApiMessages }),
+      });
+      onAgentChange(result.data);
+      setFeedback(
+        showApiMessages
+          ? 'Mensagens enviadas pela API agora estão visíveis.'
+          : 'Mensagens enviadas pela API agora estão ocultas.',
+      );
+    } catch (err) {
+      setFeedback(err.message);
+    }
+  };
   return (
     <main className="page settings-page">
       <header>
@@ -159,6 +176,22 @@ export default function Settings({ agent, onAgentChange }) {
             Salvar perfil
           </button>
         </form>
+        {adminAccess && (
+          <section className="card form-card">
+            <div className="form-heading">
+              <h2>Visualização de mensagens</h2>
+              <p>Controle a exibição das mensagens enviadas por integrações com chave de API.</p>
+            </div>
+            <label className="settings-checkbox">
+              <input
+                type="checkbox"
+                checked={agent.showApiMessages === true}
+                onChange={changeApiMessageVisibility}
+              />
+              Visualizar mensagens enviadas pela API
+            </label>
+          </section>
+        )}
         {adminAccess && (
           <form className="card form-card" onSubmit={create}>
             <div className="form-heading">

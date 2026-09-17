@@ -13,6 +13,8 @@ const MessageSchema = new mongoose.Schema({
   retryCount: { type: Number, default: 0 },
   lastDeliveryError: { type: String, default: '' },
   sender: { type: String, enum: ['client', 'agent'], required: true },
+  source: { type: String, enum: ['whatsapp', 'panel', 'api'], default: 'whatsapp', index: true },
+  apiClientOrigin: { type: String, default: '' },
   groupSenderId: { type: String, default: '' },
   groupSenderName: { type: String, default: '' },
   quotedMessageId: { type: String, default: '' },

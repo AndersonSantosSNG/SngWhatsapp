@@ -3,6 +3,7 @@ const OutboundMessage = require('../models/OutboundMessage');
 const whatsappProvider = require('../providers/whatsapp');
 const metrics = require('./metricsService');
 const logger = require('./logger');
+const { registerApiSend } = require('./whatsapp/outboundSourceTracker');
 
 function normalizeKey(value) {
   const key = String(value || '').trim();
@@ -30,11 +31,19 @@ async function sendMessage(payload, requestedKey) {
     return { duplicate: true, idempotencyKey, status: existing?.status || 'PENDING' };
   }
   const startedAt = Date.now();
+  let cancelSourceTracking = null;
   try {
     outbox.status = 'PROCESSING';
     outbox.updatedAt = new Date();
     await outbox.save();
     const hasMedia = Boolean(payload.file || payload.fileUrl || payload.fileBase64);
+    if (payload.source === 'api') {
+      cancelSourceTracking = registerApiSend(
+        payload.number,
+        hasMedia ? '' : payload.message,
+        payload.apiClientOrigin,
+      );
+    }
     const result = hasMedia
       ? await whatsappProvider.sendMedia(payload.number, payload, payload.message, payload)
       : await whatsappProvider.sendText(payload.number, payload.message, payload);
@@ -46,6 +55,7 @@ async function sendMessage(payload, requestedKey) {
     metrics.gauge('message_send_latency_ms', Date.now() - startedAt);
     return { result, duplicate: false, idempotencyKey, status: outbox.status };
   } catch (error) {
+    cancelSourceTracking?.();
     outbox.status = 'FAILED';
     outbox.retryCount += 1;
     outbox.lastError = String(error?.message || error).slice(0, 500);

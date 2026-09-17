@@ -53,6 +53,10 @@ export default function App() {
     setCollapsedState(value);
     storage.set('sidebarCollapsed', value);
   };
+  const visibleMessages =
+    agent?.role === 'admin' && agent.showApiMessages === true
+      ? messages
+      : messages.filter((message) => message.source !== 'api');
   useEffect(() => {
     const handleSessionExpired = (event) => {
       socket.disconnect();
@@ -422,7 +426,7 @@ export default function App() {
           />
           <ChatPanel
             chat={activeChat}
-            messages={messages}
+            messages={visibleMessages}
             unreadMarker={unreadMarker}
             contactOnline={contactOnline}
             hasOlderMessages={hasOlderMessages}

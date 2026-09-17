@@ -2912,7 +2912,10 @@ body[data-theme='light'] .glpi-ticket-dialog input:focus {
   border-color: #10b981;
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.14);
 }
-body[data-theme='light'] .glpi-ticket-dialog > form > p:not(.glpi-history-summary):not(.form-error) {
+body[data-theme='light']
+  .glpi-ticket-dialog
+  > form
+  > p:not(.glpi-history-summary):not(.form-error) {
   color: #94a3b8;
 }
 body[data-theme='light'] .glpi-history-summary {
@@ -2951,7 +2954,10 @@ body[data-theme='light'] .glpi-ticket-dialog .close-chat-actions .secondary-acti
   background: #e2e8f0;
   border-color: #cbd5e1;
 }
-body[data-theme='light'] .glpi-ticket-dialog .close-chat-actions .secondary-action:hover:not(:disabled) {
+body[data-theme='light']
+  .glpi-ticket-dialog
+  .close-chat-actions
+  .secondary-action:hover:not(:disabled) {
   color: #334155;
   background: #cbd5e1;
 }
@@ -2960,7 +2966,10 @@ body[data-theme='light'] .glpi-ticket-dialog .close-chat-actions .submit-button 
   background: #059669;
   border-color: #047857;
 }
-body[data-theme='light'] .glpi-ticket-dialog .close-chat-actions .submit-button:hover:not(:disabled) {
+body[data-theme='light']
+  .glpi-ticket-dialog
+  .close-chat-actions
+  .submit-button:hover:not(:disabled) {
   background: #047857;
 }
 @media (max-width: 480px) {
@@ -3787,4 +3796,16 @@ body[data-theme='light'] .group-members-dialog em {
   .docs-content pre {
     font-size: 11px;
   }
+}
+.settings-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  cursor: pointer;
+}
+
+.settings-checkbox input {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--accent);
 }

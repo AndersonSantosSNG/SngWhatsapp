@@ -21,6 +21,7 @@ function createWhatsAppEvents({
   takePendingOutgoingMedia,
   pendingOutgoingMedia,
   recordChatEvent,
+  takeOutboundSource,
 }) {
   let client = null;
   let ioInstance = null;
@@ -551,6 +552,7 @@ function createWhatsAppEvents({
         const mediaInfo =
           (await takePendingOutgoingMedia(targetChatId)) || (await saveMessageMedia(msg));
         const quotedInfo = await getQuotedContext(msg);
+        const outboundSource = takeOutboundSource(identifier, bodyContent);
 
         let chat = await Chat.findOne({ phoneNumber: identifier });
         if (!chat) {
@@ -602,6 +604,8 @@ function createWhatsAppEvents({
             phoneNumber: identifier,
             whatsappMessageId,
             sender: 'agent',
+            source: outboundSource.source,
+            apiClientOrigin: outboundSource.apiClientOrigin,
             body: bodyContent,
             ack: currentAck,
             ...quotedInfo,
@@ -610,6 +614,8 @@ function createWhatsAppEvents({
         } else {
           savedDbMessage.whatsappMessageId = whatsappMessageId || savedDbMessage.whatsappMessageId;
           savedDbMessage.ack = mergeMessageAck(savedDbMessage.ack, currentAck);
+          savedDbMessage.source = outboundSource.source;
+          savedDbMessage.apiClientOrigin = outboundSource.apiClientOrigin;
           Object.assign(savedDbMessage, quotedInfo);
           if (mediaInfo) {
             savedDbMessage.hasMedia = true;
@@ -643,6 +649,8 @@ function createWhatsAppEvents({
           }),
           sentAt: savedDbMessage.timestamp,
           fromMe: true,
+          source: savedDbMessage.source,
+          apiClientOrigin: savedDbMessage.apiClientOrigin,
         };
 
         if (ioInstance) {

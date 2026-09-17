@@ -7,6 +7,7 @@ const AgentSchema = new mongoose.Schema({
   passwordSalt: { type: String, required: true, select: false },
   role: { type: String, enum: ['admin', 'agent'], default: 'agent' },
   active: { type: Boolean, default: true },
+  showApiMessages: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
 });
 

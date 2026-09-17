@@ -21,6 +21,7 @@ function publicAgent(agent) {
     corporateEmail: agent.corporateEmail,
     role: agent.role || 'agent',
     active: agent.active,
+    showApiMessages: agent.role === 'admin' && agent.showApiMessages === true,
   };
 }
 

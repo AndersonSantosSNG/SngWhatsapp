@@ -113,6 +113,22 @@ router.patch('/auth/profile', requireAgent, async (req, res) => {
   }
 });
 
+router.patch('/auth/preferences', requireAgent, requireAdmin, async (req, res) => {
+  const showApiMessages = req.body?.showApiMessages === true;
+  const agent = await Agent.findByIdAndUpdate(
+    req.agent._id,
+    { $set: { showApiMessages } },
+    { new: true },
+  );
+  if (!agent) return res.status(404).json({ success: false, error: 'Agente não encontrado.' });
+  await audit(req, 'agent.preferences_update', {
+    targetType: 'agent',
+    targetId: agent._id,
+    details: { showApiMessages },
+  });
+  return res.json({ success: true, data: publicAgent(agent) });
+});
+
 router.get('/agents', requireAgent, requireAdmin, async (req, res) => {
   try {
     const agents = await Agent.find({}).sort({ active: -1, name: 1 });

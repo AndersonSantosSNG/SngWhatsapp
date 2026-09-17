@@ -78,6 +78,8 @@ const handleSendMessage = async (req, res) => {
         replyToMessageId,
         sendAudioAsVoice,
         isClosingMessage,
+        source: req.apiClient ? 'api' : 'panel',
+        apiClientOrigin: req.apiClient?.allowedOrigin || req.get('origin') || '',
       },
       req.get('Idempotency-Key') || req.body.idempotencyKey,
     );

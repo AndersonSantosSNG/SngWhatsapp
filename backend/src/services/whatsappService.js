@@ -18,6 +18,7 @@ const { createMessageEditor } = require('./whatsapp/messageEditor');
 const { createContactMetadataService } = require('./whatsapp/contactMetadataService');
 const { createHistorySyncService } = require('./whatsapp/historySyncService');
 const { createWhatsAppEvents } = require('./whatsapp/whatsappEvents');
+const { takeOutboundSource } = require('./whatsapp/outboundSourceTracker');
 
 const Chat = require('../models/Chat');
 const Message = require('../models/Message');
@@ -159,6 +160,7 @@ runtime = createWhatsAppEvents({
   takePendingOutgoingMedia,
   pendingOutgoingMedia,
   recordChatEvent,
+  takeOutboundSource,
 });
 
 const { initWhatsApp, destroyClient, getStatus } = runtime;
