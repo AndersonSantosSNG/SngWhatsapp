@@ -356,12 +356,13 @@ router.patch('/agents/:agentId', requireAgent, requireAdmin, async (req, res) =>
   try {
     const targetId = req.params.agentId;
     const name = String(req.body.name || '').trim();
-    const corporateEmail = String(req.body.corporateEmail || '')
+    const requestedEmail = String(req.body.corporateEmail || '')
       .trim()
       .toLowerCase();
-    const role = req.body.role === 'admin' ? 'admin' : 'agent';
+    const requestedRole = req.body.role === 'admin' ? 'admin' : 'agent';
     const password = String(req.body.password || '');
-    if (!name || !corporateEmail) {
+    const isCurrentAgent = String(req.agent._id) === targetId;
+    if (!name || (!isCurrentAgent && !requestedEmail)) {
       return res
         .status(400)
         .json({ success: false, error: 'Informe o nome e o e-mail corporativo.' });
@@ -371,14 +372,10 @@ router.patch('/agents/:agentId', requireAgent, requireAdmin, async (req, res) =>
         .status(400)
         .json({ success: false, error: 'A nova senha deve ter pelo menos 10 caracteres.' });
     }
-    if (String(req.agent._id) === targetId && role !== 'admin') {
-      return res.status(400).json({
-        success: false,
-        error: 'Voce nao pode remover o perfil de administrador da propria conta.',
-      });
-    }
     const target = await Agent.findById(targetId).select('+passwordHash +passwordSalt');
     if (!target) return res.status(404).json({ success: false, error: 'Agente nao encontrado.' });
+    const corporateEmail = isCurrentAgent ? target.corporateEmail : requestedEmail;
+    const role = isCurrentAgent ? target.role : requestedRole;
     const roleChanged = target.role !== role;
     target.name = name;
     target.corporateEmail = corporateEmail;
@@ -390,7 +387,7 @@ router.patch('/agents/:agentId', requireAgent, requireAdmin, async (req, res) =>
     await target.save();
     if (password || roleChanged) {
       const sessionFilter = { agentId: target._id };
-      if (String(req.agent._id) === targetId) sessionFilter._id = { $ne: req.agentSessionId };
+      if (isCurrentAgent) sessionFilter._id = { $ne: req.agentSessionId };
       await AgentSession.deleteMany(sessionFilter);
     }
     await audit(req, 'agent.update', {

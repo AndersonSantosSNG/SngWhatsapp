@@ -1468,6 +1468,25 @@ body[data-theme='light'] .chat-sort-menu > div button.active {
   grid-template-columns: repeat(4, minmax(130px, 1fr));
   gap: 10px;
 }
+.agent-edit-fields.current-agent {
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+}
+.agent-summary {
+  flex: 1;
+  min-width: 0;
+}
+.agent-row > .edit-agent-button {
+  min-width: 38px;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-color: rgba(16, 185, 129, 0.35);
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.1);
+}
+.agent-row > .edit-agent-button:hover {
+  background: rgba(16, 185, 129, 0.2);
+}
 .agent-edit-fields label {
   display: grid;
   gap: 5px;
@@ -1510,6 +1529,11 @@ body[data-theme='light'] .chat-sort-menu > div button.active {
   color: #fb7185;
   border-color: rgba(244, 63, 94, 0.35);
   background: rgba(244, 63, 94, 0.1);
+}
+.cancel-agent {
+  color: #cbd5e1;
+  border-color: #475569;
+  background: #334155;
 }
 .agent-confirm-dialog {
   width: min(480px, calc(100vw - 32px));
@@ -1568,6 +1592,9 @@ body[data-theme='light'] .chat-sort-menu > div button.active {
 }
 @media (max-width: 650px) {
   .agent-edit-fields {
+    grid-template-columns: 1fr;
+  }
+  .agent-edit-fields.current-agent {
     grid-template-columns: 1fr;
   }
   .agent-row {
