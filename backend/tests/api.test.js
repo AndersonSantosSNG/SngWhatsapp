@@ -89,6 +89,71 @@ describe('autenticação e autorização', () => {
     expect(await AuditLog.countDocuments({ action: 'auth.login_failed', success: false })).toBe(1);
   });
 
+  it('envia codigo e redefine a senha dentro do prazo', async () => {
+    const randomCode = vi.spyOn(crypto, 'randomInt').mockReturnValue(123456);
+    await createAgent('recuperacao@sng.com.br');
+    const { authorization } = await login('recuperacao@sng.com.br');
+
+    await request(app)
+      .post('/api/auth/forgot-password')
+      .send({ corporateEmail: 'recuperacao@sng.com.br' })
+      .expect(200);
+    const verification = await request(app)
+      .post('/api/auth/verify-reset-code')
+      .send({
+        corporateEmail: 'recuperacao@sng.com.br',
+        code: '123456',
+      })
+      .expect(200);
+    expect(verification.body.resetToken).toHaveLength(64);
+
+    await request(app)
+      .post('/api/auth/reset-password')
+      .send({
+        corporateEmail: 'recuperacao@sng.com.br',
+        resetToken: verification.body.resetToken,
+        password: 'nova-senha-segura',
+      })
+      .expect(200);
+
+    await request(app).get('/api/auth/me').set('Authorization', authorization).expect(401);
+    await request(app)
+      .post('/api/auth/login')
+      .send({ corporateEmail: 'recuperacao@sng.com.br', password: 'nova-senha-segura' })
+      .expect(200);
+    randomCode.mockRestore();
+  });
+
+  it('informa quando o e-mail de recuperacao nao esta cadastrado', async () => {
+    const response = await request(app)
+      .post('/api/auth/forgot-password')
+      .send({ corporateEmail: 'inexistente@sng.com.br' })
+      .expect(404);
+    expect(response.body.error).toMatch(/nao cadastrado/i);
+  });
+
+  it('bloqueia o codigo depois de tres tentativas incorretas', async () => {
+    const randomCode = vi.spyOn(crypto, 'randomInt').mockReturnValue(654321);
+    await createAgent('bloqueio@sng.com.br');
+    await request(app)
+      .post('/api/auth/forgot-password')
+      .send({ corporateEmail: 'bloqueio@sng.com.br' })
+      .expect(200);
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const response = await request(app)
+        .post('/api/auth/verify-reset-code')
+        .send({ corporateEmail: 'bloqueio@sng.com.br', code: '000000' })
+        .expect(400);
+      if (attempt === 3) expect(response.body.error).toMatch(/bloqueado/i);
+    }
+    await request(app)
+      .post('/api/auth/verify-reset-code')
+      .send({ corporateEmail: 'bloqueio@sng.com.br', code: '654321' })
+      .expect(400);
+    randomCode.mockRestore();
+  });
+
   it('não cria auditoria genérica para GETs e preserva ações relevantes', async () => {
     const admin = await createAgent('admin@sng.com.br', 'admin');
     const { authorization } = await login(admin.corporateEmail);

@@ -3,6 +3,21 @@ import { describe, expect, it, vi } from 'vitest';
 import MessageBubble from './MessageBubble';
 
 describe('MessageBubble', () => {
+  it('formata marcadores no chat sem alterar o texto original', () => {
+    const message = {
+      _id: 'formatted',
+      sender: 'agent',
+      body: '**Federal**\n*Razão Social:* CARPINTARIA\n_Status ativo_\n~removido~\n`código`',
+    };
+    render(<MessageBubble message={message} />);
+
+    expect(screen.getByText('Federal').tagName).toBe('STRONG');
+    expect(screen.getByText('Razão Social:').tagName).toBe('STRONG');
+    expect(screen.getByText('Status ativo').tagName).toBe('EM');
+    expect(screen.getByText('removido').tagName).toBe('S');
+    expect(screen.getByText('código').tagName).toBe('CODE');
+    expect(message.body).toContain('**Federal**');
+  });
   it('marca visualmente mensagens enviadas pela API', () => {
     render(
       <MessageBubble

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../services/api';
 
 export default function Settings({ agent, onAgentChange }) {
@@ -7,6 +7,10 @@ export default function Settings({ agent, onAgentChange }) {
   const [auditLogs, setAuditLogs] = useState([]);
   const [revealedKey, setRevealedKey] = useState('');
   const [feedback, setFeedback] = useState('');
+  const [agentDrafts, setAgentDrafts] = useState({});
+  const [pendingAgentAction, setPendingAgentAction] = useState(null);
+  const [savingAgent, setSavingAgent] = useState(false);
+  const confirmDialog = useRef(null);
   const adminAccess = agent.role === 'admin';
   const load = async () => {
     if (!adminAccess) return;
@@ -16,6 +20,14 @@ export default function Settings({ agent, onAgentChange }) {
       api('/audit-logs?limit=100'),
     ]);
     setAgents(agentsResult.data);
+    setAgentDrafts(
+      Object.fromEntries(
+        agentsResult.data.map((item) => [
+          item._id,
+          { name: item.name, corporateEmail: item.corporateEmail, role: item.role, password: '' },
+        ]),
+      ),
+    );
     setApiClients(clientsResult.data);
     setAuditLogs(auditResult.data);
   };
@@ -62,6 +74,49 @@ export default function Settings({ agent, onAgentChange }) {
       await load();
     } catch (err) {
       setFeedback(err.message);
+    }
+  };
+  const updateAgentDraft = (agentId, field, value) => {
+    setAgentDrafts((current) => ({
+      ...current,
+      [agentId]: { ...current[agentId], [field]: value },
+    }));
+  };
+  const askAgentConfirmation = (action, item) => {
+    setPendingAgentAction({ action, item });
+    confirmDialog.current?.showModal();
+  };
+  const closeAgentConfirmation = () => {
+    if (savingAgent) return;
+    confirmDialog.current?.close();
+    setPendingAgentAction(null);
+  };
+  const confirmAgentAction = async (event) => {
+    event.preventDefault();
+    if (!pendingAgentAction || savingAgent) return;
+    const { action, item } = pendingAgentAction;
+    setSavingAgent(true);
+    try {
+      if (action === 'delete') {
+        await api(`/agents/${item._id}`, { method: 'DELETE' });
+        setFeedback('Agente excluído permanentemente.');
+      } else {
+        const result = await api(`/agents/${item._id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(agentDrafts[item._id]),
+        });
+        if (item._id === agent._id) onAgentChange(result.data);
+        setFeedback('Perfil do agente atualizado com sucesso.');
+      }
+      confirmDialog.current?.close();
+      setPendingAgentAction(null);
+      await load();
+    } catch (err) {
+      setFeedback(err.message);
+      confirmDialog.current?.close();
+      setPendingAgentAction(null);
+    } finally {
+      setSavingAgent(false);
     }
   };
   const createApiClient = async (event) => {
@@ -270,28 +325,119 @@ export default function Settings({ agent, onAgentChange }) {
           {agents.map((item) => (
             <div className={`agent-row ${item.active ? '' : 'blocked'}`} key={item._id}>
               <i className={`fa-solid ${item.active ? 'fa-user' : 'fa-user-lock'}`} />
-              <span>
-                <strong>{item.name}</strong>
-                <small>{item.corporateEmail}</small>
-              </span>
-              <em>
-                {item.active ? (item.role === 'admin' ? 'Administrador' : 'Agente') : 'Bloqueado'}
-              </em>
-              <button
-                type="button"
-                className={item.active ? 'block-agent' : 'unblock-agent'}
-                disabled={item._id === agent._id}
-                onClick={() => changeStatus(item)}
-                title={
-                  item._id === agent._id ? 'Voce nao pode bloquear sua propria conta' : undefined
-                }
-              >
-                <i className={`fa-solid ${item.active ? 'fa-ban' : 'fa-unlock'}`} />
-                {item.active ? 'Bloquear' : 'Reativar'}
-              </button>
+              <div className="agent-edit-fields">
+                <label>
+                  Nome
+                  <input
+                    value={agentDrafts[item._id]?.name || ''}
+                    onChange={(event) => updateAgentDraft(item._id, 'name', event.target.value)}
+                  />
+                </label>
+                <label>
+                  E-mail corporativo
+                  <input
+                    type="email"
+                    value={agentDrafts[item._id]?.corporateEmail || ''}
+                    onChange={(event) =>
+                      updateAgentDraft(item._id, 'corporateEmail', event.target.value)
+                    }
+                  />
+                </label>
+                <label>
+                  Tipo de usuário
+                  <select
+                    value={agentDrafts[item._id]?.role || 'agent'}
+                    disabled={item._id === agent._id}
+                    onChange={(event) => updateAgentDraft(item._id, 'role', event.target.value)}
+                  >
+                    <option value="agent">Agente</option>
+                    <option value="admin">Administrador</option>
+                  </select>
+                </label>
+                <label>
+                  Redefinir senha
+                  <input
+                    type="password"
+                    minLength="10"
+                    placeholder="Deixe em branco para manter"
+                    value={agentDrafts[item._id]?.password || ''}
+                    onChange={(event) => updateAgentDraft(item._id, 'password', event.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="agent-row-actions">
+                <button
+                  type="button"
+                  className="save-agent"
+                  onClick={() => askAgentConfirmation('save', item)}
+                >
+                  <i className="fa-solid fa-floppy-disk" /> Salvar
+                </button>
+                <button
+                  type="button"
+                  className={item.active ? 'block-agent' : 'unblock-agent'}
+                  disabled={item._id === agent._id}
+                  onClick={() => changeStatus(item)}
+                >
+                  <i className={`fa-solid ${item.active ? 'fa-ban' : 'fa-unlock'}`} />
+                  {item.active ? 'Bloquear' : 'Reativar'}
+                </button>
+                <button
+                  type="button"
+                  className="delete-agent"
+                  disabled={item._id === agent._id}
+                  onClick={() => askAgentConfirmation('delete', item)}
+                >
+                  <i className="fa-solid fa-trash" /> Excluir
+                </button>
+              </div>
             </div>
           ))}
         </section>
+      )}
+      {adminAccess && (
+        <dialog
+          ref={confirmDialog}
+          className="card agent-confirm-dialog"
+          aria-labelledby="agent-confirm-title"
+          onCancel={(event) => {
+            event.preventDefault();
+            closeAgentConfirmation();
+          }}
+        >
+          <form onSubmit={confirmAgentAction}>
+            <div className="agent-confirm-title">
+              <i
+                className={`fa-solid ${pendingAgentAction?.action === 'delete' ? 'fa-trash' : 'fa-user-pen'}`}
+              />
+              <div>
+                <h2 id="agent-confirm-title">
+                  {pendingAgentAction?.action === 'delete'
+                    ? 'Excluir este agente?'
+                    : 'Confirmar alterações?'}
+                </h2>
+                <p>
+                  {pendingAgentAction?.action === 'delete'
+                    ? `O registro de ${pendingAgentAction?.item.name || 'este agente'} será apagado permanentemente.`
+                    : `As alterações no perfil de ${pendingAgentAction?.item.name || 'este agente'} serão salvas.`}
+                </p>
+              </div>
+            </div>
+            <div className="agent-confirm-actions">
+              <button type="button" onClick={closeAgentConfirmation} disabled={savingAgent}>
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                className={pendingAgentAction?.action === 'delete' ? 'danger' : 'submit-button'}
+                disabled={savingAgent}
+              >
+                <i className={`fa-solid ${savingAgent ? 'fa-spinner fa-spin' : 'fa-check'}`} />
+                {savingAgent ? 'Aguarde...' : 'Confirmar'}
+              </button>
+            </div>
+          </form>
+        </dialog>
       )}
       {adminAccess && (
         <section className="card agents-card api-clients-card">

@@ -39,23 +39,48 @@ export function MessageMedia({ message, onImage }) {
   );
 }
 
-export function LinkifiedText({ text }) {
-  const urlPattern = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
+const INLINE_PATTERN =
+  /(\*\*[^*\n]+\*\*|\*[^*\n]+\*|__[^_\n]+__|_[^_\n]+_|~~[^~\n]+~~|~[^~\n]+~|```[^`\n]+```|`[^`\n]+`|(?:https?:\/\/|www\.)[^\s<]+)/gi;
+
+function renderMessagePart(part, key) {
+  const formats = [
+    [/^\*\*([\s\S]+)\*\*$/, 'strong'],
+    [/^\*([\s\S]+)\*$/, 'strong'],
+    [/^__([\s\S]+)__$/, 'strong'],
+    [/^_([\s\S]+)_$/, 'em'],
+    [/^~~([\s\S]+)~~$/, 's'],
+    [/^~([\s\S]+)~$/, 's'],
+    [/^```([\s\S]+)```$/, 'code'],
+    [/^`([\s\S]+)`$/, 'code'],
+  ];
+  for (const [pattern, Element] of formats) {
+    const match = part.match(pattern);
+    if (match) return <Element key={key}>{renderMessageText(match[1], `${key}-inner`)}</Element>;
+  }
+  if (/^(?:https?:\/\/|www\.)/i.test(part)) {
+    const match = part.match(/^(.*?)([.,!?;:)]+)?$/);
+    const url = match?.[1] || part;
+    const punctuation = match?.[2] || '';
+    const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    return (
+      <span key={key}>
+        <a className="message-link" href={href} target="_blank" rel="noopener noreferrer">
+          {url}
+        </a>
+        {punctuation}
+      </span>
+    );
+  }
+  return part;
+}
+
+function renderMessageText(text, keyPrefix = 'message') {
   return String(text)
-    .split(urlPattern)
-    .map((part, index) => {
-      if (!/^(?:https?:\/\/|www\.)/i.test(part)) return part;
-      const match = part.match(/^(.*?)([.,!?;:)]+)?$/);
-      const url = match?.[1] || part;
-      const punctuation = match?.[2] || '';
-      const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
-      return (
-        <span key={`${url}-${index}`}>
-          <a className="message-link" href={href} target="_blank" rel="noopener noreferrer">
-            {url}
-          </a>
-          {punctuation}
-        </span>
-      );
-    });
+    .split(INLINE_PATTERN)
+    .filter((part) => part !== '')
+    .map((part, index) => renderMessagePart(part, `${keyPrefix}-${index}`));
+}
+
+export function LinkifiedText({ text }) {
+  return renderMessageText(text);
 }

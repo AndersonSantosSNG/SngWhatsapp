@@ -15,6 +15,7 @@ const crypto = require('crypto');
 const Agent = require('../models/Agent');
 const ApiClient = require('../models/ApiClient');
 const AgentSession = require('../models/AgentSession');
+const PasswordReset = require('../models/PasswordReset');
 const AuditLog = require('../models/AuditLog');
 const { hashApiKey } = require('../middlewares/auth');
 const { audit, auditMiddleware } = require('../middlewares/audit');
@@ -31,7 +32,12 @@ const {
   setSessionCookie,
   verifyPassword,
 } = require('../middlewares/agentAuth');
-const { externalSendLimiter, loginLimiter } = require('../middlewares/rateLimits');
+const {
+  externalSendLimiter,
+  loginLimiter,
+  passwordResetLimiter,
+} = require('../middlewares/rateLimits');
+const { sendPasswordResetCode } = require('../services/emailService');
 const ticketService = require('../services/ticketService');
 const metrics = require('../services/metricsService');
 
@@ -64,6 +70,144 @@ router.post('/auth/login', loginLimiter, async (req, res) => {
     res.json({ success: true, data: publicAgent(agent) });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/auth/forgot-password', passwordResetLimiter, async (req, res) => {
+  try {
+    const corporateEmail = String(req.body.corporateEmail || '')
+      .trim()
+      .toLowerCase();
+    const agent = await Agent.findOne({ corporateEmail, active: true });
+    if (!agent) {
+      return res.status(404).json({ success: false, error: 'E-mail nao cadastrado.' });
+    }
+    const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+    const codeSalt = crypto.randomBytes(16).toString('hex');
+    const codeHash = crypto.scryptSync(code, codeSalt, 64).toString('hex');
+    await PasswordReset.deleteMany({ agentId: agent._id });
+    const reset = await PasswordReset.create({
+      agentId: agent._id,
+      codeHash,
+      codeSalt,
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+    });
+    try {
+      await sendPasswordResetCode(agent.corporateEmail, agent.name, code);
+    } catch (err) {
+      await PasswordReset.deleteOne({ _id: reset._id });
+      return res.status(503).json({
+        success: false,
+        error: 'Nao foi possivel enviar o e-mail. Verifique a configuracao SMTP.',
+      });
+    }
+    await audit(req, 'auth.password_reset_requested', {
+      actorId: agent._id,
+      actorName: agent.name,
+      targetType: 'agent',
+      targetId: agent._id,
+    });
+    res.json({ success: true, message: 'Codigo enviado para o e-mail cadastrado.' });
+  } catch {
+    res.status(500).json({ success: false, error: 'Nao foi possivel solicitar a redefinicao.' });
+  }
+});
+
+router.post('/auth/verify-reset-code', passwordResetLimiter, async (req, res) => {
+  try {
+    const corporateEmail = String(req.body.corporateEmail || '')
+      .trim()
+      .toLowerCase();
+    const code = String(req.body.code || '').trim();
+    if (!/^\d{6}$/.test(code)) {
+      return res.status(400).json({ success: false, error: 'Informe o codigo de 6 digitos.' });
+    }
+    const agent = await Agent.findOne({ corporateEmail, active: true });
+    if (!agent)
+      return res.status(400).json({ success: false, error: 'Codigo invalido ou expirado.' });
+    const reset = await PasswordReset.findOne({
+      agentId: agent._id,
+      expiresAt: { $gt: new Date() },
+      verifiedAt: null,
+    }).select('+codeHash +codeSalt');
+    if (!reset || reset.blocked || reset.attempts >= 3) {
+      return res.status(400).json({ success: false, error: 'Codigo invalido ou expirado.' });
+    }
+    const candidate = crypto.scryptSync(code, reset.codeSalt, 64);
+    const saved = Buffer.from(reset.codeHash, 'hex');
+    if (candidate.length !== saved.length || !crypto.timingSafeEqual(candidate, saved)) {
+      reset.attempts += 1;
+      if (reset.attempts >= 3) reset.blocked = true;
+      await reset.save();
+      return res.status(400).json({
+        success: false,
+        error:
+          reset.attempts >= 3
+            ? 'Codigo bloqueado apos 3 tentativas. Solicite um novo codigo.'
+            : `Codigo incorreto. Restam ${3 - reset.attempts} tentativa(s).`,
+      });
+    }
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    reset.resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+    reset.verifiedAt = new Date();
+    await reset.save();
+    res.json({ success: true, resetToken });
+  } catch {
+    res.status(500).json({ success: false, error: 'Nao foi possivel validar o codigo.' });
+  }
+});
+
+router.post('/auth/reset-password', passwordResetLimiter, async (req, res) => {
+  try {
+    const corporateEmail = String(req.body.corporateEmail || '')
+      .trim()
+      .toLowerCase();
+    const resetToken = String(req.body.resetToken || '');
+    const password = String(req.body.password || '');
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      return res
+        .status(400)
+        .json({ success: false, error: 'A nova senha deve ter pelo menos 10 caracteres.' });
+    }
+    const agent = await Agent.findOne({ corporateEmail, active: true });
+    if (!agent || !resetToken) {
+      return res
+        .status(400)
+        .json({ success: false, error: 'Validacao expirada. Comece novamente.' });
+    }
+    const reset = await PasswordReset.findOne({
+      agentId: agent._id,
+      expiresAt: { $gt: new Date() },
+      blocked: false,
+      verifiedAt: { $ne: null },
+    }).select('+resetTokenHash');
+    const receivedTokenHash = crypto.createHash('sha256').update(resetToken).digest();
+    const savedTokenHash = Buffer.from(reset?.resetTokenHash || '', 'hex');
+    if (
+      !reset ||
+      receivedTokenHash.length !== savedTokenHash.length ||
+      !crypto.timingSafeEqual(receivedTokenHash, savedTokenHash)
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, error: 'Validacao expirada. Comece novamente.' });
+    }
+    const passwordSalt = crypto.randomBytes(16).toString('hex');
+    const passwordHash = crypto.scryptSync(password, passwordSalt, 64).toString('hex');
+    await Agent.updateOne({ _id: agent._id }, { $set: { passwordSalt, passwordHash } });
+    await Promise.all([
+      PasswordReset.deleteMany({ agentId: agent._id }),
+      AgentSession.deleteMany({ agentId: agent._id }),
+    ]);
+    await audit(req, 'auth.password_reset_completed', {
+      actorId: agent._id,
+      actorName: agent.name,
+      targetType: 'agent',
+      targetId: agent._id,
+    });
+    res.json({ success: true, message: 'Senha redefinida com sucesso.' });
+  } catch {
+    res.status(500).json({ success: false, error: 'Nao foi possivel redefinir a senha.' });
   }
 });
 
@@ -208,6 +352,84 @@ router.patch('/agents/:agentId/status', requireAgent, requireAdmin, async (req, 
 });
 
 // --- ROTA DE ENVIO EXTERNO (MANTÉM CHAVE DE API) ---
+router.patch('/agents/:agentId', requireAgent, requireAdmin, async (req, res) => {
+  try {
+    const targetId = req.params.agentId;
+    const name = String(req.body.name || '').trim();
+    const corporateEmail = String(req.body.corporateEmail || '')
+      .trim()
+      .toLowerCase();
+    const role = req.body.role === 'admin' ? 'admin' : 'agent';
+    const password = String(req.body.password || '');
+    if (!name || !corporateEmail) {
+      return res
+        .status(400)
+        .json({ success: false, error: 'Informe o nome e o e-mail corporativo.' });
+    }
+    if (password && password.length < MIN_PASSWORD_LENGTH) {
+      return res
+        .status(400)
+        .json({ success: false, error: 'A nova senha deve ter pelo menos 10 caracteres.' });
+    }
+    if (String(req.agent._id) === targetId && role !== 'admin') {
+      return res.status(400).json({
+        success: false,
+        error: 'Voce nao pode remover o perfil de administrador da propria conta.',
+      });
+    }
+    const target = await Agent.findById(targetId).select('+passwordHash +passwordSalt');
+    if (!target) return res.status(404).json({ success: false, error: 'Agente nao encontrado.' });
+    const roleChanged = target.role !== role;
+    target.name = name;
+    target.corporateEmail = corporateEmail;
+    target.role = role;
+    if (password) {
+      target.passwordSalt = crypto.randomBytes(16).toString('hex');
+      target.passwordHash = crypto.scryptSync(password, target.passwordSalt, 64).toString('hex');
+    }
+    await target.save();
+    if (password || roleChanged) {
+      const sessionFilter = { agentId: target._id };
+      if (String(req.agent._id) === targetId) sessionFilter._id = { $ne: req.agentSessionId };
+      await AgentSession.deleteMany(sessionFilter);
+    }
+    await audit(req, 'agent.update', {
+      targetType: 'agent',
+      targetId: target._id,
+      details: { corporateEmail, role, passwordReset: Boolean(password) },
+    });
+    res.json({ success: true, data: publicAgent(target) });
+  } catch (err) {
+    if (err?.code === 11000) {
+      return res
+        .status(409)
+        .json({ success: false, error: 'Este email corporativo ja esta cadastrado.' });
+    }
+    res.status(400).json({ success: false, error: 'Nao foi possivel atualizar o agente.' });
+  }
+});
+
+router.delete('/agents/:agentId', requireAgent, requireAdmin, async (req, res) => {
+  try {
+    if (String(req.agent._id) === req.params.agentId) {
+      return res
+        .status(400)
+        .json({ success: false, error: 'Voce nao pode excluir a propria conta.' });
+    }
+    const target = await Agent.findByIdAndDelete(req.params.agentId);
+    if (!target) return res.status(404).json({ success: false, error: 'Agente nao encontrado.' });
+    await AgentSession.deleteMany({ agentId: target._id });
+    await audit(req, 'agent.delete', {
+      targetType: 'agent',
+      targetId: target._id,
+      details: { corporateEmail: target.corporateEmail, role: target.role },
+    });
+    res.json({ success: true });
+  } catch {
+    res.status(400).json({ success: false, error: 'Nao foi possivel excluir o agente.' });
+  }
+});
+
 function normalizeOrigin(value) {
   const url = new URL(String(value || '').trim());
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('URL inválida.');
