@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, deleteMessage, editMessage, sendMessage } from './services/api';
+import { api, deleteMessage, editMessage, sendFileMessage, sendMessage } from './services/api';
 import { socket } from './services/socket';
 import { useChatSocketEvents } from './hooks/useChatSocketEvents';
 import Sidebar from './components/Sidebar';
@@ -320,20 +320,10 @@ export default function App() {
   };
   const sendFile = async (file, caption, replyToMessageId, sendAudioAsVoice = false) => {
     const number = activeChat.phoneNumber;
-    const data = await file.arrayBuffer();
-    let binary = '';
-    new Uint8Array(data).forEach((byte) => {
-      binary += String.fromCharCode(byte);
-    });
-    await sendMessage({
-      number,
-      sendAudioAsVoice,
-      message: caption,
-      replyToMessageId,
-      fileBase64: btoa(binary),
-      mimeType: file.type,
-      fileName: file.name,
-    });
+    await sendFileMessage(
+      { number, sendAudioAsVoice, message: caption, replyToMessageId },
+      file,
+    );
   };
   const updateChat = async (action) => {
     try {

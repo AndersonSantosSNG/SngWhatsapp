@@ -106,13 +106,16 @@ app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
   const isCorsError = /origem/i.test(err?.message || '');
   const isUploadError = err?.name === 'MulterError';
-  const status = isCorsError ? 403 : isUploadError ? 400 : 500;
+  const isPayloadTooLarge = err?.type === 'entity.too.large' || err?.code === 'LIMIT_FILE_SIZE';
+  const status = isCorsError ? 403 : isPayloadTooLarge ? 413 : isUploadError ? 400 : 500;
   if (status === 500) console.error('[HTTP]', err);
   return res.status(status).json({
     success: false,
     error: isCorsError
       ? 'Origem não autorizada.'
-      : isUploadError
+      : isPayloadTooLarge
+        ? 'O arquivo enviado excede o limite permitido.'
+        : isUploadError
         ? 'O arquivo enviado é inválido ou excede os limites permitidos.'
         : 'Erro interno do servidor.',
   });

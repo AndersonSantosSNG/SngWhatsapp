@@ -30,6 +30,19 @@ export function sendMessage(payload) {
   });
 }
 
+export function sendFileMessage(payload, file) {
+  const body = new FormData();
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') body.append(key, String(value));
+  });
+  body.append('file', file, file.name);
+
+  return api('/panel/send-message', {
+    method: 'POST',
+    body,
+  });
+}
+
 export function editMessage(messageId, body) {
   return api(`/messages/${messageId}`, {
     method: 'PATCH',
