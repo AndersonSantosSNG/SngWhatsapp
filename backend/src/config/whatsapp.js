@@ -2,6 +2,10 @@ const path = require('path');
 
 module.exports = {
   authPath: path.join(__dirname, '..', '..', '..', 'sessions'),
+  webVersion: process.env.WHATSAPP_WEB_VERSION || '2.3000.1018939023-alpha',
+  webVersionCacheUrl:
+    process.env.WHATSAPP_WEB_CACHE_URL ||
+    'https://raw.githubusercontent.com/wppconnect-team/wa-version-check/main/html/{version}.html',
   puppeteer: {
     headless: true,
     protocolTimeout: 120000,

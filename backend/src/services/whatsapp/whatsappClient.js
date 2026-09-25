@@ -4,10 +4,11 @@ const config = require('../../config/whatsapp');
 function createWhatsAppClient() {
   return new Client({
     authStrategy: new LocalAuth({ dataPath: config.authPath }),
+    webVersion: config.webVersion,
     webVersionCache: {
       type: 'remote',
-      remotePath:
-        'https://raw.githubusercontent.com/wppconnect-team/wa-version-check/main/html/2.3000.1018939023-alpha.html',
+      remotePath: config.webVersionCacheUrl,
+      strict: true,
     },
     puppeteer: {
       ...config.puppeteer,
