@@ -2,7 +2,8 @@ const fs = require('fs');
 
 const utilsPath = require.resolve('whatsapp-web.js/src/util/Injected/Utils.js');
 const source = fs.readFileSync(utilsPath, 'utf8');
-const marker = 'delete message.__x_id; // SNG: WhatsApp Web media model ID collision';
+const oldMarker = 'delete message.__x_id; // SNG: WhatsApp Web media model ID collision';
+const marker = '// SNG: restore message ID after spreading the WhatsApp media model';
 
 if (source.includes(marker)) {
   console.log('[patch-whatsapp-web] Correcao de envio de midia ja aplicada.');
@@ -16,10 +17,10 @@ if (!source.includes(anchor)) {
   );
 }
 
-const patched = source.replace(
-  anchor,
-  `        ${marker}\n\n${anchor}`,
-);
+const patch = `        ${marker}\n        message.id = newMsgKey;\n        delete message.__x_id;`;
+const patched = source.includes(oldMarker)
+  ? source.replace(`        ${oldMarker}`, patch)
+  : source.replace(anchor, `${patch}\n\n${anchor}`);
 
 fs.writeFileSync(utilsPath, patched, 'utf8');
 console.log('[patch-whatsapp-web] Correcao de envio de midia aplicada.');

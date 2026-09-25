@@ -6,6 +6,7 @@ module.exports = {
   webVersionCacheUrl:
     process.env.WHATSAPP_WEB_CACHE_URL ||
     'https://raw.githubusercontent.com/wppconnect-team/wa-version-check/main/html/{version}.html',
+  webVersionCacheStrict: process.env.WHATSAPP_WEB_CACHE_STRICT === 'true',
   puppeteer: {
     headless: true,
     protocolTimeout: 120000,

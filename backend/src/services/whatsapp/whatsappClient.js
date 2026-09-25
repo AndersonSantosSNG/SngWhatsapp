@@ -8,7 +8,7 @@ function createWhatsAppClient() {
     webVersionCache: {
       type: 'remote',
       remotePath: config.webVersionCacheUrl,
-      strict: true,
+      strict: config.webVersionCacheStrict,
     },
     puppeteer: {
       ...config.puppeteer,
