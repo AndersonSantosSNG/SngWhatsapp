@@ -22,6 +22,7 @@ const { audit, auditMiddleware } = require('../middlewares/audit');
 const {
   MIN_PASSWORD_LENGTH,
   SESSION_DURATION_MS,
+  canManageChat,
   hashSessionToken,
   publicAgent,
   requireAdmin,
