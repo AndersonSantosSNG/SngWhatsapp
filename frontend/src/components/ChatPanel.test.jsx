@@ -74,6 +74,31 @@ describe('ChatPanel', () => {
     expect(screen.getByDisplayValue('Não perder')).toBeVisible();
   });
 
+  it('exibe o arquivo e um indicador enquanto o upload está em andamento', async () => {
+    let finishUpload;
+    const onFile = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finishUpload = resolve;
+        }),
+    );
+    const { container } = render(
+      <ChatPanel {...baseProps} messages={[]} onSend={vi.fn()} onFile={onFile} />,
+    );
+    const file = new File(['conteudo'], 'relatorio.pdf', { type: 'application/pdf' });
+    fireEvent.change(container.querySelector('input[type="file"]'), {
+      target: { files: [file] },
+    });
+
+    expect(screen.getByRole('status')).toHaveTextContent('relatorio.pdf');
+    expect(screen.getByRole('status')).toHaveTextContent('Enviando arquivo...');
+    expect(screen.getByPlaceholderText('Enviando relatorio.pdf...')).toBeDisabled();
+    expect(onFile).toHaveBeenCalledWith(file, '', undefined);
+
+    finishUpload();
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+  });
+
   it('oculta comandos de envio em canal somente leitura', () => {
     render(
       <ChatPanel

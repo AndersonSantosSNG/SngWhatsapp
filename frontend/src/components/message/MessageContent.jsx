@@ -1,4 +1,27 @@
 export function MessageMedia({ message, onImage }) {
+  if (message.pendingUpload) {
+    const bytes = Number(message.mediaFileSize || 0);
+    const size =
+      bytes >= 1024 * 1024
+        ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+        : bytes >= 1024
+          ? `${Math.round(bytes / 1024)} KB`
+          : bytes
+            ? `${bytes} B`
+            : '';
+    return (
+      <div className="file-card file-uploading" role="status" aria-live="polite">
+        <span className="file-card-icon">
+          <i className="fa-solid fa-file-arrow-up" />
+        </span>
+        <span className="file-card-details">
+          <strong>{message.mediaFileName || 'Arquivo'}</strong>
+          <small>{size ? `${size} · ` : ''}Enviando arquivo...</small>
+        </span>
+        <i className="fa-solid fa-spinner fa-spin file-card-progress" aria-hidden="true" />
+      </div>
+    );
+  }
   if (!message.mediaUrl) return null;
   const mime = message.mediaMimeType || '';
   if (mime.startsWith('image/')) {
@@ -32,9 +55,19 @@ export function MessageMedia({ message, onImage }) {
       </div>
     );
   }
+  const rawName = message.mediaFileName || '';
+  const looksGenerated = /^[a-f\d]{32,}(?:\.[a-z\d]+)?$/i.test(rawName);
+  const typeLabel = mime === 'application/pdf' ? 'Documento PDF' : 'Arquivo anexado';
+  const displayName = rawName && !looksGenerated ? rawName : typeLabel;
   return (
-    <a className="file-link" href={message.mediaUrl} target="_blank" rel="noreferrer">
-      <i className="fa-solid fa-file-arrow-down" /> {message.mediaFileName || 'Baixar arquivo'}
+    <a className="file-link file-card" href={message.mediaUrl} target="_blank" rel="noreferrer">
+      <span className="file-card-icon">
+        <i className="fa-solid fa-file-arrow-down" />
+      </span>
+      <span className="file-card-details">
+        <strong>{displayName}</strong>
+        <small>Clique para abrir ou baixar</small>
+      </span>
     </a>
   );
 }

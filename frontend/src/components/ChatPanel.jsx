@@ -42,12 +42,14 @@ export default function ChatPanel({
   const [deletingMessage, setDeletingMessage] = useState(null);
   const [highlightedMessage, setHighlightedMessage] = useState('');
   const [sending, setSending] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(null);
   const [sendError, setSendError] = useState('');
   useEffect(() => {
     setEditingMessage(null);
     setDeletingMessage(null);
     setReplyTo(null);
     setText('');
+    setUploadingFile(null);
   }, [chat?._id]);
   const bottom = useRef(null);
   const messageElements = useRef(new Map());
@@ -70,7 +72,7 @@ export default function ChatPanel({
       return;
     }
     bottom.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, chat?._id, unreadMarker]);
+  }, [messages, chat?._id, unreadMarker, uploadingFile]);
   const handleMessagesScroll = (event) => {
     const { scrollTop, scrollHeight, clientHeight } = event.currentTarget;
     setShowScrollButton(scrollHeight - scrollTop - clientHeight > 160);
@@ -143,6 +145,38 @@ export default function ChatPanel({
       setEditingMessage(selectedEdit);
       setSendError(err.message || 'Não foi possível concluir. Tente novamente.');
     } finally {
+      setSending(false);
+    }
+  };
+  const sendSelectedFile = async (file) => {
+    if (!file || sending) return;
+    const caption = text;
+    const selectedReply = replyTo;
+    const replyId = selectedReply?.id || selectedReply?._id;
+    setSending(true);
+    setUploadingFile({
+      id: `upload-${Date.now()}-${file.name}`,
+      fromMe: true,
+      sender: 'agent',
+      body: caption.trim(),
+      hasMedia: true,
+      mediaFileName: file.name,
+      mediaMimeType: file.type || 'application/octet-stream',
+      mediaFileSize: file.size,
+      pendingUpload: true,
+      createdAt: new Date().toISOString(),
+    });
+    setSendError('');
+    setText('');
+    setReplyTo(null);
+    try {
+      await onFile(file, caption, replyId);
+    } catch (err) {
+      setText(caption);
+      setReplyTo(selectedReply);
+      setSendError(err.message || 'Não foi possível enviar o arquivo.');
+    } finally {
+      setUploadingFile(null);
       setSending(false);
     }
   };
@@ -321,10 +355,10 @@ export default function ChatPanel({
             {loadingOlderMessages ? 'Carregando...' : 'Carregar mensagens anteriores'}
           </button>
         )}
-        {messages.map((message, index) => {
+        {[...messages, ...(uploadingFile ? [uploadingFile] : [])].map((message, index, list) => {
           const messageId = String(message.id || message._id);
           const dateKey = getDateKey(message);
-          const showDateSeparator = dateKey && dateKey !== getDateKey(messages[index - 1]);
+          const showDateSeparator = dateKey && dateKey !== getDateKey(list[index - 1]);
           return (
             <Fragment key={messageId}>
               {showDateSeparator && (
@@ -437,18 +471,8 @@ export default function ChatPanel({
                 disabled={sending}
                 onChange={(event) => {
                   const file = event.target.files[0];
-                  const replyId = replyTo?.id || replyTo?._id;
-                  if (file)
-                    onFile(file, text, replyId)
-                      .then(() => {
-                        setText('');
-                        setReplyTo(null);
-                        setSendError('');
-                      })
-                      .catch((err) =>
-                        setSendError(err.message || 'Não foi possível enviar o arquivo.'),
-                      );
                   event.target.value = '';
+                  if (file) sendSelectedFile(file);
                 }}
               />
             </label>
@@ -459,9 +483,11 @@ export default function ChatPanel({
             onChange={(event) => setText(event.target.value)}
             placeholder={
               sending
-                ? editingMessage
-                  ? 'Salvando edição...'
-                  : 'Enviando...'
+                ? uploadingFile
+                  ? `Enviando ${uploadingFile.mediaFileName}...`
+                  : editingMessage
+                    ? 'Salvando edição...'
+                    : 'Enviando...'
                 : editingMessage
                   ? 'Editar mensagem'
                   : replyTo

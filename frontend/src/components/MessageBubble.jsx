@@ -240,7 +240,7 @@ export default function MessageBubble({
   const swipeProgress = Math.min(1, Math.abs(swipeOffset) / 54);
   return (
     <div
-      className={`message-row ${fromMe ? 'mine' : 'theirs'} ${menuOpen ? 'menu-open' : ''} ${swipeOffset ? 'swiping' : ''}`}
+      className={`message-row ${fromMe ? 'mine' : 'theirs'} ${message.pendingUpload ? 'pending-upload' : ''} ${menuOpen ? 'menu-open' : ''} ${swipeOffset ? 'swiping' : ''}`}
       onContextMenu={openContextMenu}
       onPointerDown={startTouchGesture}
       onPointerMove={moveTouchGesture}
@@ -378,7 +378,7 @@ export default function MessageBubble({
             <i
               title={ackLabel}
               aria-label={ackLabel}
-              className={`message-ack fa-solid ${ack >= 2 ? 'fa-check-double' : ack < 0 ? 'fa-circle-exclamation' : 'fa-check'} ${ack >= 3 ? 'read' : ''} ${ack < 0 ? 'error' : ''}`}
+              className={`message-ack fa-solid ${message.pendingUpload ? 'fa-spinner fa-spin' : ack >= 2 ? 'fa-check-double' : ack < 0 ? 'fa-circle-exclamation' : 'fa-check'} ${ack >= 3 ? 'read' : ''} ${ack < 0 ? 'error' : ''}`}
             />
           )}
         </span>
