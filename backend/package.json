@@ -5,6 +5,8 @@
   "type": "commonjs",
   "main": "server.js",
   "scripts": {
+    "postinstall": "node scripts/patchWhatsappWebMedia.js",
+    "patch-whatsapp-web": "node scripts/patchWhatsappWebMedia.js",
     "start": "node server.js",
     "create-admin": "node scripts/createAdmin.js",
     "clear-database": "node scripts/clearDatabase.js",
