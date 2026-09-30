@@ -21,7 +21,7 @@ function avatarColor(chat) {
   return colors[Math.abs(hash) % colors.length];
 }
 
-export default function Avatar({ chat, large = false }) {
+export default function Avatar({ chat, large = false, onImage }) {
   const conversation = chat;
   const color = avatarColor(conversation);
   const [photo, setPhoto] = useState('');
@@ -54,10 +54,30 @@ export default function Avatar({ chat, large = false }) {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [conversation._id, conversation.updatedAt, conversation.isDraft, conversation.profilePicUrl]);
-  return (
-    <div className={`avatar ${large ? 'avatar-large' : ''}`} style={{ '--avatar-color': color }}>
+  const content = (
+    <>
       {!photo && <i className={`fa-solid ${conversation.isGroup ? 'fa-users' : 'fa-user'}`} />}
       {photo && <img className="loaded" src={photo} alt="" />}
+    </>
+  );
+  const className = `avatar ${large ? 'avatar-large' : ''}`;
+  const style = { '--avatar-color': color };
+  if (photo && onImage) {
+    return (
+      <button
+        type="button"
+        className={`${className} avatar-image-button`}
+        style={style}
+        onClick={() => onImage(photo)}
+        aria-label="Ampliar foto do perfil"
+      >
+        {content}
+      </button>
+    );
+  }
+  return (
+    <div className={className} style={style}>
+      {content}
     </div>
   );
 }

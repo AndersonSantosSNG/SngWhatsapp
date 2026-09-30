@@ -8,6 +8,7 @@ export default function ContactInfoDialog({ chat, contactOnline, onClose }) {
   const [contact, setContact] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [profileViewer, setProfileViewer] = useState('');
 
   useEffect(() => {
     const element = dialog.current;
@@ -56,7 +57,7 @@ export default function ContactInfoDialog({ chat, contactOnline, onClose }) {
         </button>
       </header>
       <div className="contact-info-profile">
-        <Avatar chat={chat} />
+        <Avatar chat={chat} onImage={setProfileViewer} />
         <div>
           <strong>{displayName}</strong>
           <span className={contactOnline ? 'contact-online' : ''}>
@@ -125,6 +126,14 @@ export default function ContactInfoDialog({ chat, contactOnline, onClose }) {
       </dl>
       {loading && <p className="contact-info-state">Consultando perfil no WhatsApp...</p>}
       {error && <p className="contact-info-state error">{error}</p>}
+      {profileViewer && (
+        <div className="media-viewer" onClick={() => setProfileViewer('')}>
+          <button type="button" aria-label="Fechar visualização da foto">
+            <i className="fa-solid fa-xmark" />
+          </button>
+          <img src={profileViewer} alt="Visualização da foto do perfil" />
+        </div>
+      )}
     </dialog>
   );
 }

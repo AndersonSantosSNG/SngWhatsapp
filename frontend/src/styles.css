@@ -677,6 +677,11 @@ body[data-theme='light'] .chat-sort-menu > div button.active {
   height: 100%;
   object-fit: cover;
 }
+.avatar-image-button {
+  padding: 0;
+  cursor: zoom-in;
+  font: inherit;
+}
 .chat-panel {
   flex: 1;
   min-width: 0;
