@@ -122,6 +122,10 @@ function createMediaService({ getClient, isClientReady }) {
             mediaKey: source.mediaKey,
             mediaKeyTimestamp: source.mediaKeyTimestamp,
             type: source.type,
+            // Required by recent WhatsApp Web builds. Without it, uncached
+            // media is treated as application/octet-stream and the page
+            // throws the opaque minified error `t: t`.
+            mimetype: source.mimetype,
             signal: new AbortController().signal,
             downloadQpl: mockQpl,
           });
