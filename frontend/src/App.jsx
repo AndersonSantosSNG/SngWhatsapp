@@ -13,6 +13,28 @@ import logo from './assets/logo.png';
 import alertFavicon from './assets/alertlogo.ico';
 import defaultFavicon from './assets/favicon.ico';
 
+const unreadStorageKey = (agentId) => `unreadByChat:${agentId}`;
+
+export function readPersistedUnread(agentId) {
+  if (!agentId) return {};
+  try {
+    const parsed = JSON.parse(storage.get(unreadStorageKey(agentId), '{}'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        ([ticketId, unread]) =>
+          ticketId &&
+          unread &&
+          Number.isFinite(unread.count) &&
+          unread.count > 0 &&
+          typeof unread.firstMessageId === 'string',
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
 export default function App() {
   const [initializing, setInitializing] = useState(true);
   const [serverAvailable, setServerAvailable] = useState(false);
@@ -35,6 +57,9 @@ export default function App() {
   const [authNotice, setAuthNotice] = useState('');
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
+  useEffect(() => {
+    if (agent?._id) storage.set(unreadStorageKey(agent._id), JSON.stringify(unreadByChat));
+  }, [agent?._id, unreadByChat]);
   useEffect(() => {
     // Remove tokens legados; a sessão do painel agora usa somente cookie HttpOnly.
     storage.remove('agentAuthToken');
@@ -193,6 +218,7 @@ export default function App() {
       try {
         const result = await api('/auth/me');
         if (!active) return;
+        setUnreadByChat(readPersistedUnread(result.data._id));
         setAgent(result.data);
         socket.auth = {};
         socket.connect();
@@ -293,6 +319,7 @@ export default function App() {
     socket.auth = {};
     socket.connect();
     setAuthNotice('');
+    setUnreadByChat(readPersistedUnread(result.data._id));
     setAgent(result.data);
     await loadChats();
   };

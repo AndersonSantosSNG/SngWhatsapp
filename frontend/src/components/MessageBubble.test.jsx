@@ -3,6 +3,30 @@ import { describe, expect, it, vi } from 'vitest';
 import MessageBubble from './MessageBubble';
 
 describe('MessageBubble', () => {
+  it('converte sentAt no navegador em vez de usar a hora textual do servidor', () => {
+    const formatter = vi
+      .spyOn(Date.prototype, 'toLocaleTimeString')
+      .mockImplementation(function formatTime() {
+        expect(this.toISOString()).toBe('2026-09-30T10:57:00.000Z');
+        return '07:57';
+      });
+
+    render(
+      <MessageBubble
+        message={{
+          _id: 'timezone',
+          sender: 'agent',
+          body: 'Teste',
+          timestamp: '10:57',
+          sentAt: '2026-09-30T10:57:00.000Z',
+        }}
+      />,
+    );
+
+    expect(screen.getByText('07:57')).toBeVisible();
+    formatter.mockRestore();
+  });
+
   it('formata marcadores no chat sem alterar o texto original', () => {
     const message = {
       _id: 'formatted',

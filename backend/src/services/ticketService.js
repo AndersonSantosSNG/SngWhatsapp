@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Chat = require('../models/Chat');
+const Message = require('../models/Message');
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -21,7 +22,7 @@ function encodeCursor(chat) {
   return Buffer.from(JSON.stringify({ date, id: chat._id })).toString('base64url');
 }
 
-async function listTickets({ status, cursor, limit }) {
+async function listTickets({ status, cursor, limit, showApiMessages = false }) {
   const pageSize = Math.min(MAX_LIMIT, Math.max(1, Number.parseInt(limit || DEFAULT_LIMIT, 10)));
   const filter = status ? { status } : {};
   const decoded = decodeCursor(cursor);
@@ -42,6 +43,33 @@ async function listTickets({ status, cursor, limit }) {
     .lean();
   const hasMore = rows.length > pageSize;
   const data = rows.slice(0, pageSize);
+  if (!showApiMessages && data.length) {
+    const visibleMessages = await Message.aggregate([
+      {
+        $match: {
+          ticketId: { $in: data.map((chat) => chat._id) },
+          source: { $ne: 'api' },
+          isInternalEvent: { $ne: true },
+        },
+      },
+      { $sort: { timestamp: -1 } },
+      {
+        $group: {
+          _id: '$ticketId',
+          body: { $first: '$body' },
+          timestamp: { $first: '$timestamp' },
+        },
+      },
+    ]);
+    const latestVisibleByChat = new Map(
+      visibleMessages.map((message) => [String(message._id), message]),
+    );
+    for (const chat of data) {
+      const visible = latestVisibleByChat.get(String(chat._id));
+      chat.lastMessage = visible?.body || '';
+      chat.lastMessageAt = visible?.timestamp || null;
+    }
+  }
   return {
     data,
     meta: {

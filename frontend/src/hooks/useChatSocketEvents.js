@@ -37,27 +37,37 @@ export function useChatSocketEvents({
     };
     const onMessage = (data) => {
       const message = data.message || data;
+      const apiMessageIsHidden =
+        message.source === 'api' &&
+        !(agent?.role === 'admin' && agent.showApiMessages === true);
       const replacesDraft =
         activeChat?.isDraft &&
         String(activeChat.phoneNumber || '') ===
           String(message.phoneNumber || data.chat?.phoneNumber || '');
       setConnected(true);
-      if (data.chat) syncChat(data.chat);
-      else loadChats({ showLoading: false }).catch(console.error);
+      if (!apiMessageIsHidden) {
+        if (data.chat) syncChat(data.chat);
+        else loadChats({ showLoading: false }).catch(console.error);
+      }
       if (replacesDraft && data.chat) setActiveChat(data.chat);
-      if (activeChatId === message.ticketId || replacesDraft) {
+      if (!apiMessageIsHidden && (activeChatId === message.ticketId || replacesDraft)) {
         setMessages((current) =>
           current.some((item) => (item.id || item._id) === message.id)
             ? current
             : [...current, message],
         );
       }
-      if (agent && !message.fromMe) {
+      if (!apiMessageIsHidden && agent && !message.fromMe) {
         if (!notificationAudio.current) notificationAudio.current = new Audio(notificationSound);
         notificationAudio.current.currentTime = 0;
         notificationAudio.current.play().catch(() => {});
       }
-      if (agent && !message.fromMe && activeChatId !== message.ticketId) {
+      if (
+        !apiMessageIsHidden &&
+        agent &&
+        !message.fromMe &&
+        activeChatId !== message.ticketId
+      ) {
         setUnreadByChat((current) => {
           const unread = current[message.ticketId];
           return {
@@ -112,6 +122,7 @@ export function useChatSocketEvents({
       message_ack: onAck,
       message_edit: onEdit,
       message_revoke: onRevoke,
+      chat_event: onTicketEvent,
       ticket_event: onTicketEvent,
       history_sync_complete: onHistorySyncComplete,
     };

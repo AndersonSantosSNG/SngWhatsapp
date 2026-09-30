@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const Chat = require('../src/models/Chat');
+const Message = require('../src/models/Message');
 const { listTickets, decodeCursor } = require('../src/services/ticketService');
 const { looksDangerous, validateUploadedFile } = require('../src/services/fileValidation');
 const { normalizeKey } = require('../src/services/messageService');
@@ -39,6 +40,36 @@ describe('paginacao de tickets', () => {
 
   it('rejeita cursor malformado', async () => {
     await expect(listTickets({ cursor: 'invalido' })).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it('oculta mensagens da API na previa quando a preferencia esta desativada', async () => {
+    const chat = await Chat.create({
+      phoneNumber: '5511999999999',
+      lastMessage: 'Mensagem da API',
+      lastMessageAt: new Date('2026-09-30T11:00:00.000Z'),
+    });
+    await Message.create({
+      ticketId: chat._id,
+      phoneNumber: chat.phoneNumber,
+      sender: 'client',
+      body: 'Mensagem visivel',
+      timestamp: new Date('2026-09-30T10:00:00.000Z'),
+    });
+    await Message.create({
+      ticketId: chat._id,
+      phoneNumber: chat.phoneNumber,
+      sender: 'agent',
+      source: 'api',
+      body: 'Mensagem da API',
+      timestamp: new Date('2026-09-30T11:00:00.000Z'),
+    });
+
+    const hidden = await listTickets({ showApiMessages: false });
+    const visible = await listTickets({ showApiMessages: true });
+
+    expect(hidden.data[0].lastMessage).toBe('Mensagem visivel');
+    expect(hidden.data[0].lastMessageAt).toEqual(new Date('2026-09-30T10:00:00.000Z'));
+    expect(visible.data[0].lastMessage).toBe('Mensagem da API');
   });
 });
 

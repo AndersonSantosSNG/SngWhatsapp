@@ -576,7 +576,10 @@ router.post('/whatsapp/sync-history', requireAgent, requireAdmin, async (req, re
 router.get('/tickets', requireAgent, async (req, res) => {
   const startedAt = Date.now();
   try {
-    const result = await ticketService.listTickets(req.query);
+    const result = await ticketService.listTickets({
+      ...req.query,
+      showApiMessages: req.agent.role === 'admin' && req.agent.showApiMessages === true,
+    });
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(err.statusCode || 500).json({ success: false, error: err.message });
