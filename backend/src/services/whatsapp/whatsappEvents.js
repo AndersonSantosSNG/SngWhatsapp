@@ -447,6 +447,7 @@ function createWhatsAppEvents({
           groupSenderId,
           groupSenderName,
           body: bodyContent,
+          timestamp: messageDate,
           ...quotedInfo,
           ...(mediaInfo || {}),
         });
@@ -467,7 +468,7 @@ function createWhatsAppEvents({
           mediaUrl: mediaInfo ? `/api/messages/${savedDbMessage._id}/media` : null,
           mediaMimeType: mediaInfo?.mediaMimeType || '',
           mediaFileName: mediaInfo?.mediaFileName || '',
-          timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+          timestamp: savedDbMessage.timestamp,
           sentAt: savedDbMessage.timestamp,
           fromMe: false,
         };
@@ -608,6 +609,7 @@ function createWhatsAppEvents({
             apiClientOrigin: outboundSource.apiClientOrigin,
             body: bodyContent,
             ack: currentAck,
+            timestamp: messageDate,
             ...quotedInfo,
             ...(mediaInfo || {}),
           });
@@ -643,10 +645,7 @@ function createWhatsAppEvents({
           mediaUrl: savedDbMessage.hasMedia ? `/api/messages/${savedDbMessage._id}/media` : null,
           mediaMimeType: savedDbMessage.mediaMimeType || '',
           mediaFileName: savedDbMessage.mediaFileName || '',
-          timestamp: new Date(savedDbMessage.createdAt || Date.now()).toLocaleTimeString('pt-BR', {
-            hour: '2-digit',
-            minute: '2-digit',
-          }),
+          timestamp: savedDbMessage.timestamp,
           sentAt: savedDbMessage.timestamp,
           fromMe: true,
           source: savedDbMessage.source,

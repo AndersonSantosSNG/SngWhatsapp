@@ -112,7 +112,10 @@ export default function MessageBubble({
     );
   }
   const fromMe = message.fromMe ?? message.sender === 'agent';
-  const rawTime = message.timestamp || message.createdAt;
+  // `sentAt` is the canonical instant emitted by the backend. Older socket
+  // payloads may also contain `timestamp` as an already-formatted HH:mm value,
+  // which reflects the server timezone and cannot be converted by the browser.
+  const rawTime = message.sentAt || message.timestamp || message.createdAt;
   const parsedTime =
     rawTime && String(rawTime).includes('T')
       ? new Date(rawTime).toLocaleTimeString('pt-BR', {
