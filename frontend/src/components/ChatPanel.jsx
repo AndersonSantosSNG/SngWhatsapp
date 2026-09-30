@@ -232,6 +232,7 @@ export default function ChatPanel({
           key={chat._id}
           chat={chat}
           contactOnline={contactOnline}
+          onOpenImage={onOpenImage}
           onClose={() => setContactInfoTicketId(null)}
         />
       )}

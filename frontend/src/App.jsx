@@ -52,6 +52,7 @@ export default function App() {
   const [connected, setConnected] = useState(false);
   const [qr, setQr] = useState('');
   const [viewer, setViewer] = useState('');
+  const viewerObjectUrl = useRef('');
   const [theme, setThemeState] = useState(storage.get('panelTheme', 'dark'));
   const [collapsed, setCollapsedState] = useState(storage.get('sidebarCollapsed') === 'true');
   const [authNotice, setAuthNotice] = useState('');
@@ -69,6 +70,26 @@ export default function App() {
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 4500);
   }, []);
+  const closeViewer = useCallback(() => {
+    setViewer('');
+    if (viewerObjectUrl.current) {
+      URL.revokeObjectURL(viewerObjectUrl.current);
+      viewerObjectUrl.current = '';
+    }
+  }, []);
+  const openViewer = useCallback(
+    (source) => {
+      closeViewer();
+      if (source instanceof Blob) {
+        viewerObjectUrl.current = URL.createObjectURL(source);
+        setViewer(viewerObjectUrl.current);
+        return;
+      }
+      setViewer(source || '');
+    },
+    [closeViewer],
+  );
+  useEffect(() => () => closeViewer(), [closeViewer]);
 
   const setTheme = (value) => {
     setThemeState(value);
@@ -457,7 +478,7 @@ export default function App() {
             onClose={close}
             onCreateGlpiTicket={createGlpiTicket}
             onBack={closeView}
-            onOpenImage={setViewer}
+            onOpenImage={openViewer}
           />
         </main>
       )}
@@ -465,8 +486,8 @@ export default function App() {
       {agent && tab === 'settings' && <Settings agent={agent} onAgentChange={setAgent} />}
       {!agent && <LoginModal onLogin={login} notice={authNotice} />}
       {viewer && (
-        <div className="media-viewer" onClick={() => setViewer('')}>
-          <button>
+        <div className="media-viewer" onClick={closeViewer}>
+          <button type="button" aria-label="Fechar visualização da mídia">
             <i className="fa-solid fa-xmark" />
           </button>
           <img src={viewer} alt="Visualização da mídia" />

@@ -25,8 +25,10 @@ export default function Avatar({ chat, large = false, onImage }) {
   const conversation = chat;
   const color = avatarColor(conversation);
   const [photo, setPhoto] = useState('');
+  const [photoBlob, setPhotoBlob] = useState(null);
   useEffect(() => {
     setPhoto('');
+    setPhotoBlob(null);
     if (conversation.isDraft && conversation.profilePicUrl) {
       setPhoto(conversation.profilePicUrl);
       return undefined;
@@ -44,6 +46,7 @@ export default function Avatar({ chat, large = false, onImage }) {
           return;
         }
         objectUrl = URL.createObjectURL(blob);
+        setPhotoBlob(blob);
         setPhoto(objectUrl);
       })
       .catch(() => {
@@ -68,7 +71,7 @@ export default function Avatar({ chat, large = false, onImage }) {
         type="button"
         className={`${className} avatar-image-button`}
         style={style}
-        onClick={() => onImage(photo)}
+        onClick={() => onImage(photo, photoBlob)}
         aria-label="Ampliar foto do perfil"
       >
         {content}

@@ -16,7 +16,7 @@ describe('Avatar', () => {
 
     const button = await screen.findByRole('button', { name: 'Ampliar foto do perfil' });
     fireEvent.click(button);
-    expect(onImage).toHaveBeenCalledWith(photoUrl);
+    expect(onImage).toHaveBeenCalledWith(photoUrl, expect.any(Blob));
     await waitFor(() => expect(fetch).toHaveBeenCalled());
   });
 });
