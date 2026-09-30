@@ -55,17 +55,18 @@ function createMediaService({ getClient, isClientReady }) {
     if (!client) return null;
 
     const raw = msg._data || {};
+    const nestedMedia = raw.mediaData || {};
     const messageId = getWhatsAppMessageId(msg);
     const mediaData = {
-      directPath: raw.directPath,
-      encFilehash: raw.encFilehash,
-      filehash: raw.filehash,
-      mediaKey: raw.mediaKey || msg.mediaKey,
-      mediaKeyTimestamp: raw.mediaKeyTimestamp,
-      type: raw.type || msg.type,
-      mimetype: raw.mimetype,
-      filename: raw.filename,
-      size: raw.size,
+      directPath: raw.directPath || nestedMedia.directPath,
+      encFilehash: raw.encFilehash || nestedMedia.encFilehash,
+      filehash: raw.filehash || nestedMedia.filehash,
+      mediaKey: raw.mediaKey || nestedMedia.mediaKey || msg.mediaKey,
+      mediaKeyTimestamp: raw.mediaKeyTimestamp || nestedMedia.mediaKeyTimestamp,
+      type: raw.type || nestedMedia.type || msg.type,
+      mimetype: raw.mimetype || nestedMedia.mimetype,
+      filename: raw.filename || nestedMedia.filename,
+      size: raw.size || nestedMedia.size,
     };
 
     return client.pupPage.evaluate(
@@ -86,7 +87,23 @@ function createMediaService({ getClient, isClientReady }) {
           } catch (err) {}
         }
 
-        const source = model || fallbackMedia;
+        // Some WhatsApp Web builds keep the download metadata inside
+        // `mediaData`, while others expose it directly on the message model.
+        const modelMedia = model?.mediaData || {};
+        const source = {
+          directPath: model?.directPath || modelMedia.directPath || fallbackMedia.directPath,
+          encFilehash: model?.encFilehash || modelMedia.encFilehash || fallbackMedia.encFilehash,
+          filehash: model?.filehash || modelMedia.filehash || fallbackMedia.filehash,
+          mediaKey: model?.mediaKey || modelMedia.mediaKey || fallbackMedia.mediaKey,
+          mediaKeyTimestamp:
+            model?.mediaKeyTimestamp ||
+            modelMedia.mediaKeyTimestamp ||
+            fallbackMedia.mediaKeyTimestamp,
+          type: model?.type || modelMedia.type || fallbackMedia.type,
+          mimetype: model?.mimetype || modelMedia.mimetype || fallbackMedia.mimetype,
+          filename: model?.filename || modelMedia.filename || fallbackMedia.filename,
+          size: model?.size || modelMedia.size || fallbackMedia.size,
+        };
         if (!source?.directPath || !source?.mediaKey) return null;
         const mockQpl = {
           addAnnotations() {
